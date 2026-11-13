@@ -1,0 +1,14 @@
+{
+  "name": "Klavuz",
+  "short_name": "Klavuz",
+  "description": "Tedarikçi kataloglarını ürün kartlarına çeviren, arama ve teklif hazırlayan uygulama.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#F3F4F6",
+  "theme_color": "#1E293B",
+  "lang": "tr",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

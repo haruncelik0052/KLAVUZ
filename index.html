@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1E293B">
+<title>Klavuz</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root { --ink:#1F2937; --muted:#6B7280; --bg:#F3F4F6; --card:#fff; --dark:#1E293B; --gold:#F59E0B; --line:#E5E7EB; --ok:#065F46; --okbg:#ECFDF5; --warn:#92400E; --warnbg:#FEF3C7; --pend:#1E3A8A; --pendbg:#EFF6FF; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#E5E7EB; --muted:#9CA3AF; --bg:#0F172A; --card:#1E293B; --line:#334155; } }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Inter, system-ui, sans-serif; color:var(--ink); background:var(--bg); padding-bottom:76px; }
+  header.top { background:var(--dark); color:#fff; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:5; }
+  header.top b { font-size:20px; }
+  main { max-width:960px; margin:0 auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
+  .card { background:var(--card); border-radius:10px; padding:14px; display:flex; flex-direction:column; gap:8px; }
+  .card h2, .card h3 { margin:0; }
+  .card h2 { font-size:20px; } .card h3 { font-size:16px; }
+  .row { display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
+  .muted { color:var(--muted); font-size:13px; }
+  input, select { font:inherit; padding:9px 10px; border:1px solid #D1D5DB; border-radius:8px; background:#fff; color:#111827; min-width:0; }
+  input.sm { width:72px; padding:5px 6px; }
+  input[type=search] { width:100%; font-size:16px; height:46px; }
+  label { display:flex; flex-direction:column; gap:4px; font-size:14px; }
+  button { font:inherit; border:0; border-radius:8px; padding:9px 12px; background:var(--dark); color:#fff; font-weight:600; cursor:pointer; }
+  button.primary { background:var(--gold); color:#111827; }
+  button.danger { background:#B91C1C; }
+  button.link { background:none; color:var(--pend); padding:4px 6px; font-weight:500; }
+  button.ghost { background:#fff; color:var(--dark); border:1px solid var(--dark); }
+  code { background:#F3F4F6; padding:1px 5px; border-radius:4px; }
+  .badge { display:inline-block; border-radius:999px; padding:2px 9px; font-size:12px; font-weight:600; margin-right:4px; }
+  .b-ok { background:var(--okbg); color:var(--ok); } .b-warn { background:var(--warnbg); color:var(--warn); } .b-pend { background:var(--pendbg); color:var(--pend); } .b-gray { background:#F3F4F6; color:#374151; }
+  .offer { border-top:1px solid var(--line); padding-top:10px; display:flex; flex-direction:column; gap:6px; font-size:14px; }
+  .sugg { background:var(--pendbg); border:1px solid #BFDBFE; border-radius:10px; padding:10px 12px; display:flex; flex-direction:column; gap:6px; font-size:14px; }
+  .sugg button { background:#fff; color:var(--ink); border:1px solid #93C5FD; text-align:left; font-weight:500; }
+  .card[data-item] { cursor:pointer; }
+  .internal { background:#FFFBEB; border:1px solid #FDE68A; color:var(--warn); border-radius:10px; padding:8px 12px; font-size:13px; }
+  pre#cust { white-space:pre-wrap; background:#fff; color:#111827; border:2px dashed #94A3B8; border-radius:10px; padding:12px; font:14px/1.5 Inter, system-ui, sans-serif; margin:0; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th, td { padding:6px; border-top:1px solid var(--line); text-align:left; vertical-align:top; }
+  .scroll { overflow-x:auto; max-height:360px; overflow-y:auto; }
+  nav.tabs { position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--line); display:flex; justify-content:space-around; padding:6px 0 calc(8px + env(safe-area-inset-bottom)); z-index:6; }
+  nav.tabs button { background:none; color:var(--muted); font-size:12px; font-weight:500; display:flex; flex-direction:column; align-items:center; gap:2px; padding:6px 10px; }
+  nav.tabs button.on { color:var(--dark); font-weight:700; }
+  nav.tabs .n { background:var(--gold); color:#111827; border-radius:999px; padding:0 6px; font-size:11px; }
+  #toast { position:fixed; left:50%; bottom:86px; transform:translateX(-50%) translateY(20px); background:var(--dark); color:#fff; padding:10px 16px; border-radius:8px; opacity:0; transition:.25s; pointer-events:none; font-size:14px; max-width:90%; z-index:9; }
+  #toast.show { opacity:1; transform:translateX(-50%); }
+  @media print {
+    body * { visibility:hidden; }
+    #cust, #cust * { visibility:visible; }
+    #cust { position:absolute; left:0; top:0; width:100%; border:0; }
+    header.top, nav.tabs { display:none; }
+  }
+</style>
+</head>
+<body>
+<header class="top"><b>Klavuz</b><span class="muted" style="color:#CBD5E1">Tedarikçi kataloğu</span></header>
+<main id="view"></main>
+<nav class="tabs">
+  <button data-tab="ara">🔎<span>Ara</span></button>
+  <button data-tab="katalog">📄<span>Belge</span></button>
+  <button data-tab="sepet">🧾<span>Sepet <span class="n" id="cartBadge">0</span></span></button>
+  <button data-tab="uyari">🔔<span>Uyarılar <span class="n" id="alertBadge">0</span></span></button>
+  <button data-tab="ayar">⚙️<span>Ayarlar</span></button>
+</nav>
+<div id="toast"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
