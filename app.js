@@ -6,7 +6,11 @@
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
-  function fmt(n) { return (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString('tr-TR') + ' TL'; }
+  var SYM = { TL: 'TL', EUR: '€', USD: '$' };
+  function fmtC(n, cur) {
+    if (n == null || isNaN(n)) return '—';
+    return Number(n).toLocaleString('tr-TR', { maximumFractionDigits: 2 }) + ' ' + (SYM[cur || 'TL'] || 'TL');
+  }
   function today() { return new Date().toISOString().slice(0, 10); }
   function num(v) { var n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; }
   function fold(s) { return String(s || '').toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/\s+/g, ' ').trim(); }
@@ -30,16 +34,25 @@
   }
 
   // ---------- Veri ----------
+  var DEFAULT_NOTIFY = { up: true, down: true, below: true, pending: true, check: true };
   function empty() {
     return { items: {}, offers: {}, history: [], docs: [], cart: [], cartDiscount: 0,
-      settings: { company: '', phone: '', note: 'Fiyatlar KDV hariçtir.' } };
+      settings: { company: '', phone: '', note: 'Fiyatlar KDV hariçtir.', notify: Object.assign({}, DEFAULT_NOTIFY) } };
   }
   var db;
-  function load() { try { return Object.assign(empty(), JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) { return empty(); } }
+  function load() {
+    try {
+      var d = Object.assign(empty(), JSON.parse(localStorage.getItem(KEY)) || {});
+      d.settings = Object.assign(empty().settings, d.settings || {});
+      d.settings.notify = Object.assign({}, DEFAULT_NOTIFY, d.settings.notify || {});
+      return d;
+    } catch (e) { return empty(); }
+  }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('Kayıt alanı doldu. Yedek alıp eski belgeleri silin.'); } }
 
-  // Ürün resimleri çok yer kapladığı için ayrı bir veritabanında (IndexedDB) tutulur
-  var idb = null, imgCache = {};
+  // Resimler çok yer kapladığı için ayrı veritabanında (IndexedDB) tutulur.
+  // Anahtarlar: "item:<ürünId>" -> resim, "doc:<belgeId>" -> belgedeki tüm resimler
+  var idb = null, kvCache = {};
   function openImgDb() {
     return new Promise(function (res, rej) {
       if (!window.indexedDB) return rej(new Error('no indexeddb'));
@@ -49,33 +62,41 @@
       r.onerror = function () { rej(r.error); };
     });
   }
-  function putImg(id, url) {
-    imgCache[id] = url;
+  function kvPut(k, v) {
+    kvCache[k] = v;
     if (!idb) return;
-    try { var tx = idb.transaction('img', 'readwrite'); tx.objectStore('img').put(url, id); } catch (e) {}
+    try { idb.transaction('img', 'readwrite').objectStore('img').put(v, k); } catch (e) {}
   }
-  function getImg(id) {
-    if (imgCache[id] !== undefined) return Promise.resolve(imgCache[id]);
+  function kvGet(k) {
+    if (k in kvCache) return Promise.resolve(kvCache[k]);
     if (!idb) return Promise.resolve(null);
     return new Promise(function (res) {
       try {
-        var rq = idb.transaction('img').objectStore('img').get(id);
-        rq.onsuccess = function () { imgCache[id] = rq.result || null; res(imgCache[id]); };
+        var rq = idb.transaction('img').objectStore('img').get(k);
+        rq.onsuccess = function () { kvCache[k] = rq.result === undefined ? null : rq.result; res(kvCache[k]); };
         rq.onerror = function () { res(null); };
       } catch (e) { res(null); }
     });
   }
+  function kvDel(k) {
+    delete kvCache[k];
+    if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').delete(k); } catch (e) {}
+  }
+  function kvClear() {
+    kvCache = {};
+    if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').clear(); } catch (e) {}
+  }
   function hydrateImages(root) {
     (root || document).querySelectorAll('[data-img]').forEach(function (el) {
       var id = el.dataset.img;
-      getImg(id).then(function (url) {
+      kvGet('item:' + id).then(function (url) {
         if (url && el.isConnected && el.dataset.img === id) el.innerHTML = '<img alt="" src="' + url + '">';
       });
     });
   }
 
   function offersOf(itemId) { return Object.values(db.offers).filter(function (o) { return o.itemId === itemId; }); }
-  function buyOf(o) { return o.listPrice == null ? null : Math.round(o.listPrice * (1 - (o.supDisc || 0) / 100)); }
+  function buyOf(o) { return o.listPrice == null ? null : Math.round(o.listPrice * (1 - (o.supDisc || 0) / 100) * 100) / 100; }
   function sizeSort(a, b) { return String(a.size || '').localeCompare(String(b.size || ''), 'tr', { numeric: true }); }
   function similarItems(item) {
     var tk = tokens(item.name);
@@ -88,46 +109,56 @@
   }
   function mergeItems(fromId, toId) {
     offersOf(fromId).forEach(function (o) { o.itemId = toId; });
-    if (db.items[fromId] && db.items[fromId].hasImg && !db.items[toId].hasImg) { putImg(toId, imgCache[fromId] || null); db.items[toId].hasImg = true; }
+    var from = db.items[fromId], to = db.items[toId];
+    if (from && to && from.hasImg && !to.hasImg) { kvGet('item:' + fromId).then(function (u) { if (u) { kvPut('item:' + toId, u); to.hasImg = true; save(); render(); } }); }
     delete db.items[fromId]; save();
+  }
+  function itemCheckNeeded(it) {
+    return !it.verified || offersOf(it.id).some(function (o) { return o.status === 'check'; });
   }
 
   // ---------- Belge okuma ----------
   var CODE_RE = /^[A-Za-z0-9][A-Za-z0-9\-\/\.]{4,}$/;
-  var MONEY_RE = /\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?\s?(?:TL|₺)?|\d+,\d{1,2}\s?(?:TL|₺)?|\d+\s?(?:TL|₺)/gi;
-  var MONEY_EXACT = /^(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?\s?(?:TL|₺)?$/i;
+  var CUR_PART = '(?:TL|₺|€|EUR|USD|\\$)';
+  var MONEY_RE = new RegExp('\\d{1,3}(?:\\.\\d{3})+(?:,\\d{1,2})?\\s?' + CUR_PART + '?|\\d+,\\d{1,2}\\s?' + CUR_PART + '?|\\d+\\s?' + CUR_PART, 'gi');
+  var MONEY_EXACT = new RegExp('^(?:\\d{1,3}(?:\\.\\d{3})+|\\d+)(?:,\\d{1,2})?\\s?' + CUR_PART + '?$', 'i');
   var SIZE_RE = /\d+\/\d+\s?"?|DN\s?\d+|M\d+(?:x\d+(?:[.,]\d+)?)?\b|\d+(?:[.,]\d+)?\s?(?:mm|cm|bar|kg|lt|inç|")/i;
+  var STD_RE = /^(ISO|EN|ASTM|UNS|DIN|TS|JIS|BS|AISI|ASME|AWS)\b/i;
   function isCode(t) {
-    return CODE_RE.test(t) && /\d/.test(t) && !/^\d{1,3}(\.\d{3})+$/.test(t) && !/,/.test(t) && !/(TL|₺)$/i.test(t);
+    return CODE_RE.test(t) && /\d/.test(t) && !/^\d{1,3}(\.\d{3})+$/.test(t) && !/,/.test(t) && !/(TL|₺|€|EUR|USD|\$)$/i.test(t);
   }
+  function curOf(s) { return /€|EUR/i.test(s) ? 'EUR' : (/\$|USD/i.test(s) ? 'USD' : 'TL'); }
   function toNum(s) {
-    var t = String(s).replace(/TL|₺/gi, '').trim();
+    var t = String(s).replace(/TL|₺|€|EUR|USD|\$/gi, '').trim();
     if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(/\./g, '');
     var n = parseFloat(t); return isNaN(n) ? null : n;
   }
   function parseLine(line) {
     var raw = String(line || '').replace(/\s+/g, ' ').trim();
     if (raw.length < 4) return null;
+    // Standart satırları (ISO, EN, ASTM...) ürün değil, bilgi notudur
+    if (STD_RE.test(raw)) return null;
     var toks = raw.split(' '), code = null, idx = -1;
     for (var i = 0; i < toks.length; i++) {
       var t = toks[i].replace(/[,;:|()]+$/, '');
       if (isCode(t)) { code = t; idx = i; break; }
     }
     var rest = toks.filter(function (t, j) { return j !== idx; }).join(' ');
-    var price = null, ms = rest.match(MONEY_RE);
+    var price = null, cur = 'TL', ms = rest.match(MONEY_RE);
     if (ms) {
-      var last = ms[ms.length - 1]; price = toNum(last);
+      var last = ms[ms.length - 1]; price = toNum(last); cur = curOf(last);
       var p = rest.lastIndexOf(last); rest = rest.slice(0, p) + ' ' + rest.slice(p + last.length);
     }
     var size = '', sm = rest.match(SIZE_RE);
     if (sm) { size = sm[0].trim(); rest = rest.replace(sm[0], ' '); }
     var name = rest.replace(/\s+/g, ' ').replace(/^[\s\-–|:,;]+|[\s\-–|:,;]+$/g, '').trim();
     if (!code && price == null) return null;
+    if (!code && name.length < 3) return null;
     var warn = null;
     if (!code) warn = 'kod yok';
     else if (price == null) warn = 'fiyat yok';
     else if (/[ILO]/.test(code.toUpperCase())) warn = 'kodu kontrol edin (I/L/1, O/0 karışabilir)';
-    return { code: code || '', name: name, size: size, price: price, warn: warn };
+    return { code: code || '', name: name, size: size, price: price, cur: cur, warn: warn };
   }
   function parseLines(lines) {
     return lines.map(function (l) {
@@ -138,7 +169,7 @@
     }).filter(Boolean);
   }
   function parseCells(cells) {
-    var code = null, price = null, size = '', names = [];
+    var code = null, price = null, cur = 'TL', size = '', names = [];
     cells.forEach(function (c) {
       if (c === '' || c == null) return;
       if (typeof c === 'number') {
@@ -147,17 +178,17 @@
       }
       var s = String(c).trim(); if (!s) return;
       if (!code && isCode(s)) { code = s; return; }
-      if (MONEY_EXACT.test(s)) { price = toNum(s); return; }
+      if (MONEY_EXACT.test(s)) { price = toNum(s); cur = curOf(s); return; }
       if (!size && SIZE_RE.test(s) && s.length <= 14) { size = s; return; }
       names.push(s);
     });
     if (!code && price == null) return null;
     names.sort(function (a, b) { return b.length - a.length; });
     var warn = !code ? 'kod yok' : (price == null ? 'fiyat yok' : null);
-    return { code: code || '', name: names[0] || '', size: size, price: price, warn: warn };
+    return { code: code || '', name: names[0] || '', size: size, price: price, cur: cur, warn: warn };
   }
 
-  // PDF: metin satırları + sayfadaki resimler (her resim, sayfa üzerindeki yerine göre kırpılır)
+  // PDF: metin satırları + sayfadaki resimler (her resim sayfa üzerindeki yerine göre kırpılır)
   async function readPdf(file, prog) {
     if (typeof pdfjsLib === 'undefined') throw new Error('PDF okuyucu yüklenemedi. İnternet bağlantısını kontrol edin.');
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -221,7 +252,7 @@
       m[2] * c[0] + m[3] * c[2], m[2] * c[1] + m[3] * c[3],
       m[4] * c[0] + m[5] * c[2] + c[4], m[4] * c[1] + m[5] * c[3] + c[5]];
   }
-  // Her resmi, aynı sayfadaki en yakın ürün satırına bağla
+  // Her resmi, aynı sayfadaki en yakın ürün satırına bağla (önce o sayfadaki satır, sonra yakınlık)
   function attachImages(rows, images) {
     images.forEach(function (im) {
       var best = null, bd = Infinity;
@@ -239,7 +270,7 @@
     if (/\.pdf$/.test(n)) {
       var res = await readPdf(file, prog);
       var rows = attachImages(parseLines(res.lines), res.images);
-      return { rows: rows, textLength: res.lines.reduce(function (s, l) { return s + l.text.length; }, 0) };
+      return { rows: rows, images: res.images, textLength: res.lines.reduce(function (s, l) { return s + l.text.length; }, 0) };
     }
     if (/\.(xlsx|xls|csv|ods)$/.test(n)) {
       if (typeof XLSX === 'undefined') throw new Error('Excel okuyucu yüklenemedi. İnternet bağlantısını kontrol edin.');
@@ -249,9 +280,9 @@
           var pr = parseCells(r); if (pr) out.push(pr);
         });
       });
-      return { rows: out, textLength: 1 };
+      return { rows: out, images: [], textLength: 1 };
     }
-    return { rows: parseLines((await file.text()).split(/\r?\n/)), textLength: 1 };
+    return { rows: parseLines((await file.text()).split(/\r?\n/)), images: [], textLength: 1 };
   }
   function prepDraft(rows) {
     var seen = {};
@@ -267,17 +298,18 @@
   // - Aynı tedarikçi + aynı kod: teklifi günceller, fiyat değiştiyse geçmişe yazar
   // - Aynı tedarikçi + aynı ürün adı: aynı ürün kartına yeni varyant (ölçü/kod) olarak ekler
   // - Yeni ürün: yeni kart oluşturur
-  function commit(rows, supplier, kind, docName) {
-    var docId = uid(), res = { created: 0, updated: 0, changed: 0, pending: 0 };
+  function commit(d) {
+    var rows = d.rows, supplier = d.supplier, kind = d.kind, docName = d.name, docId = d.docId;
+    var res = { created: 0, updated: 0, changed: 0, pending: 0 };
     rows.forEach(function (r) {
       var key = codeKey(r.code);
       var off = key ? Object.values(db.offers).find(function (o) { return o.supplier === supplier && o.key === key; }) : null;
       if (off) {
-        if (r.price != null && r.price !== off.listPrice) {
-          db.history.push({ offerId: off.id, old: off.listPrice, price: r.price, date: today(), doc: docName });
+        if (r.price != null && (r.price !== off.listPrice || r.cur !== off.cur)) {
+          db.history.push({ offerId: off.id, old: off.listPrice, price: r.price, cur: r.cur, date: today(), doc: docName });
           var wasSell = off.sellPrice === off.listPrice;
           off.lastDir = (off.listPrice != null && r.price > off.listPrice) ? 'up' : 'down';
-          off.listPrice = r.price;
+          off.listPrice = r.price; off.cur = r.cur;
           if (wasSell) off.sellPrice = r.price;
           res.changed++;
         }
@@ -291,23 +323,34 @@
       var nm = fold(r.name);
       var item = nm ? Object.values(db.items).find(function (it) { return fold(it.name) === nm && it.brand === supplier; }) : null;
       if (!item) {
-        item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', brand: supplier, category: '', note: '', verified: !pendingFlag && !r.warn, hasImg: false };
+        item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', brand: supplier, category: '', note: '', verified: false, hasImg: false };
         db.items[item.id] = item;
-      } else if (!pendingFlag && !r.warn) item.verified = true;
+      }
       if (r.img) attachImg(item, r.img);
       var o = { id: uid(), itemId: item.id, supplier: supplier, code: r.code || '', key: key, size: r.size || '',
-        listPrice: r.price, supDisc: 0, sellPrice: r.price, lastDir: null,
+        listPrice: r.price, cur: r.cur || 'TL', supDisc: 0, sellPrice: r.price, lastDir: null,
         status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), updated: today(), docId: docId };
       db.offers[o.id] = o; res.created++;
       if (pendingFlag) res.pending++;
     });
+    if (d.images && d.images.length) kvPut('doc:' + docId, d.images.map(function (im) { return { page: im.page, url: im.url }; }));
     db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length });
     save();
     return res;
   }
   function attachImg(item, url) {
     if (!item || item.hasImg) return;
-    item.hasImg = true; putImg(item.id, url);
+    item.hasImg = true; kvPut('item:' + item.id, url);
+  }
+  function deleteDoc(docId) {
+    Object.values(db.offers).forEach(function (o) { if (o.docId === docId) delete db.offers[o.id]; });
+    Object.keys(db.items).forEach(function (id) {
+      if (!offersOf(id).length) { kvDel('item:' + id); delete db.items[id]; }
+    });
+    db.docs = db.docs.filter(function (d) { return d.id !== docId; });
+    kvDel('doc:' + docId);
+    db.cart = db.cart.filter(function (l) { return db.offers[l.offerId]; });
+    save();
   }
 
   // ---------- Arama ----------
@@ -319,6 +362,16 @@
     return offs.some(function (o) {
       return (qk && codeKey(o.code).indexOf(qk) >= 0) || (qc && confKey(o.code).indexOf(qc) >= 0) || fold(o.supplier).indexOf(fold(q)) >= 0;
     });
+  }
+  function passFilter(it) {
+    var offs = offersOf(it.id);
+    switch (st.filter) {
+      case 'kontrol': return itemCheckNeeded(it);
+      case 'resimsiz': return !it.hasImg;
+      case 'bekliyor': return offs.some(function (o) { return o.status === 'pending'; });
+      case 'dogrulanmamis': return !it.verified;
+      default: return true;
+    }
   }
   function suggestions(q) {
     var qc = confKey(q.trim());
@@ -335,8 +388,10 @@
   function badgesOf(it, offs) {
     var b = '';
     if (it.verified) b += '<span class="badge b-ok">✓ Doğrulandı</span>';
+    else b += '<span class="badge b-gray">Doğrulanmadı</span>';
     if (offs.some(function (o) { return o.status === 'check'; })) b += '<span class="badge b-warn">Kontrol gerekli</span>';
     if (offs.some(function (o) { return o.status === 'pending'; })) b += '<span class="badge b-pend">Ana katalogda yok, bekliyor</span>';
+    if (!it.hasImg) b += '<span class="badge b-gray">Resimsiz</span>';
     return b;
   }
   function thumb(it, cls) {
@@ -352,24 +407,29 @@
       '<div class="ptxt"><b>' + esc(it.name) + '</b>' +
       '<div class="muted">' + esc(sup) + (codes ? ' · ' + esc(codes) : '') + '</div>' +
       (sizes ? '<div class="muted">Ölçü: ' + esc(sizes) + '</div>' : '') +
-      '<div class="price">' + (best ? (offs.length > 1 ? 'Başlangıç ' : '') + fmt(best.sellPrice) : 'Fiyat yok') + '</div>' +
+      '<div class="price">' + (best ? (offs.length > 1 ? 'Başlangıç ' : '') + fmtC(best.sellPrice, best.cur) : 'Fiyat yok') + '</div>' +
       '<div>' + badgesOf(it, offs) + '</div></div></div>';
   }
   function drawResults() {
     var q = st.q.trim();
-    var items = Object.values(db.items).filter(function (it) { return matchItem(it, q); })
+    var items = Object.values(db.items).filter(function (it) { return matchItem(it, q) && passFilter(it); })
       .sort(function (a, b) { return a.name.localeCompare(b.name, 'tr'); });
     $('#sugg').innerHTML = q ? suggestions(q) : '';
     $('#results').innerHTML = items.length ? items.slice(0, 200).map(card).join('') :
-      '<p class="muted">' + (Object.keys(db.items).length ? 'Sonuç yok.' : 'Henüz ürün yok. Belge sekmesinden bir katalog yükleyin.') + '</p>';
+      '<p class="muted">' + (Object.keys(db.items).length ? 'Bu filtrede sonuç yok.' : 'Henüz ürün yok. Belge sekmesinden bir katalog yükleyin.') + '</p>';
     hydrateImages($('#results'));
   }
 
   // ---------- Ekranlar ----------
-  var st = { tab: 'ara', q: '', item: null, variant: null, draft: null, catSupplier: '', catKind: 'katalog', histOffer: null };
+  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, draft: null, catSupplier: '', catKind: 'katalog',
+    histOffer: null, edit: null, pick: false, pickList: [] };
+  var FILTERS = [['hepsi', 'Tümü'], ['kontrol', 'Kontrol gerekli'], ['dogrulanmamis', 'Doğrulanmamış'], ['resimsiz', 'Resimsiz'], ['bekliyor', 'Bekleyen']];
 
   function viewSearch() {
-    return '<div class="card"><input type="search" id="q" placeholder="Ürün adı, kod veya marka" value="' + esc(st.q) + '"></div>' +
+    return '<div class="card"><input type="search" id="q" placeholder="Ürün adı, kod veya marka" value="' + esc(st.q) + '">' +
+      '<div class="chips">' + FILTERS.map(function (f) {
+        return '<button class="chip' + (st.filter === f[0] ? ' on' : '') + '" data-act="filter" data-id="' + f[0] + '">' + f[1] + '</button>';
+      }).join('') + '</div></div>' +
       '<div id="sugg"></div><div id="results" style="display:flex;flex-direction:column;gap:10px"></div>';
   }
   function statusBadge(o) {
@@ -384,18 +444,34 @@
     var h = db.history.filter(function (x) { return x.offerId === oid; }).reverse();
     if (!h.length) return '<div class="muted">Fiyat değişikliği yok.</div>';
     return '<table><tr><th>Tarih</th><th>Eski</th><th>Yeni</th><th>Belge</th></tr>' + h.map(function (x) {
-      return '<tr><td>' + esc(x.date) + '</td><td>' + fmt(x.old) + '</td><td>' + fmt(x.price) + '</td><td>' + esc(x.doc) + '</td></tr>';
+      return '<tr><td>' + esc(x.date) + '</td><td>' + fmtC(x.old, x.cur) + '</td><td>' + fmtC(x.price, x.cur) + '</td><td>' + esc(x.doc) + '</td></tr>';
     }).join('') + '</table>';
   }
   function offerRow(o) {
     return '<div class="offer">' +
       '<div><b>' + esc(o.supplier) + '</b> · kod <code>' + esc(o.code || '—') + '</code>' + (o.size ? ' · ' + esc(o.size) : '') + ' ' + statusBadge(o) + '</div>' +
-      '<div class="muted">Liste ' + fmt(o.listPrice) + ' · Tedarikçi indirimi <input class="sm" type="number" data-disc="' + o.id + '" value="' + (o.supDisc || 0) + '">% · Alış ' + fmt(buyOf(o)) + '</div>' +
-      '<div class="row"><span>Satış <input class="sm" type="number" data-sell="' + o.id + '" value="' + (o.sellPrice == null ? '' : o.sellPrice) + '"> TL</span>' +
+      '<div class="muted">Liste ' + fmtC(o.listPrice, o.cur) + ' · Tedarikçi indirimi <input class="sm" type="number" data-disc="' + o.id + '" value="' + (o.supDisc || 0) + '">% · Alış ' + fmtC(buyOf(o), o.cur) + '</div>' +
+      '<div class="row"><span>Satış <input class="sm" type="number" data-sell="' + o.id + '" value="' + (o.sellPrice == null ? '' : o.sellPrice) + '"> ' +
+      '<select data-cur="' + o.id + '" class="sm">' + ['TL', 'EUR', 'USD'].map(function (c) { return '<option value="' + c + '"' + ((o.cur || 'TL') === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></span>' +
       '<span><button data-act="addcart" data-id="' + o.id + '">Sepete ekle</button> ' +
       '<button class="link" data-act="hist" data-id="' + o.id + '">Fiyat geçmişi</button>' +
       (o.lastDir ? ' <button class="link" data-act="ack" data-id="' + o.id + '">Gördüm</button>' : '') + '</span></div>' +
       (st.histOffer === o.id ? histHtml(o.id) : '') + '</div>';
+  }
+  function editForm(it, o) {
+    return '<div class="card editbox"><h3>Bilgileri düzelt</h3>' +
+      '<label>Ürün adı <input id="e_name" value="' + esc(it.name) + '"></label>' +
+      '<label>Marka / tedarikçi <input id="e_brand" value="' + esc(it.brand) + '"></label>' +
+      '<label>Kod <input id="e_code" value="' + esc(o.code) + '"></label>' +
+      '<label>Ölçü <input id="e_size" value="' + esc(o.size) + '"></label>' +
+      '<label>Liste fiyatı <input id="e_price" type="number" value="' + (o.listPrice == null ? '' : o.listPrice) + '"></label>' +
+      '<label>Para birimi <select id="e_cur">' + ['TL', 'EUR', 'USD'].map(function (c) { return '<option value="' + c + '"' + ((o.cur || 'TL') === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label>' +
+      '<div class="row"><button class="primary" data-act="saveedit" data-id="' + o.id + '">Kaydet</button><button class="ghost" data-act="canceledit">İptal</button></div></div>';
+  }
+  function pickerHtml() {
+    return '<div class="card"><h3>Belgeden resim seç</h3><div class="muted">Bu ürünün teklif geldiği belgedeki resimler. Doğru resme dokunun.</div>' +
+      '<div id="picker" class="pickgrid"><span class="muted">Yükleniyor...</span></div>' +
+      '<div class="row"><button class="ghost" data-act="closepick">Kapat</button></div></div>';
   }
   function viewItem(id) {
     var it = db.items[id];
@@ -406,18 +482,31 @@
     st.variant = sel.id;
     var variants = offs.length > 1 ? '<div class="variants">' + offs.map(function (o) {
       return '<button class="chip' + (o.id === sel.id ? ' on' : '') + '" data-act="variant" data-id="' + o.id + '">' +
-        esc(o.size || o.code || '—') + '<small>' + fmt(o.sellPrice) + '</small></button>';
+        esc(o.size || o.code || '—') + '<small>' + fmtC(o.sellPrice, o.cur) + '</small></button>';
     }).join('') + '</div>' : '';
+    var webQ = encodeURIComponent((it.brand + ' ' + (sel.code || it.name)).trim());
+    var noImg = !it.hasImg ? '<div class="card noimg"><b>Resim yok</b>' +
+      '<div class="row"><button class="ghost" data-act="pickimg">Belgeden resim seç</button>' +
+      '<a class="btnlike" target="_blank" rel="noopener" href="https://www.google.com/search?tbm=isch&q=' + webQ + '">Web\'de görsel ara</a></div>' +
+      '<div class="muted">Web\'den seçtiğin resmi indirip "Belgeden resim seç" yerine telefon galerisinden de ekleyebilirsin (sonraki sürüm).</div></div>' : '';
+    var verify = '<div class="card"><h3>Kontrol</h3><div class="row">' +
+      (!it.verified ? '<button class="primary" data-act="verify" data-id="' + id + '">✓ Doğrula</button>' : '') +
+      '<button class="ghost" data-act="edit" data-id="' + sel.id + '">Düzelt</button>' +
+      '<button class="ghost" data-act="nextcheck" data-id="' + id + '">Sonraki kontrol →</button></div></div>';
     return '<button class="link" data-act="back">← Geri</button>' +
       '<div class="card detail">' + thumb(it, 'hero') +
       '<div><h2>' + esc(it.name) + '</h2><div class="muted">' + esc(it.brand) + (sel.code ? ' · kod ' + esc(sel.code) : '') + '</div></div>' +
       '<div>' + badgesOf(it, offs) + '</div>' + variants +
-      '<div class="bigprice">' + fmt(sel.sellPrice) + ' <span class="muted">(öneri satış' + (sel.size ? ', ' + esc(sel.size) : '') + ')</span></div>' +
+      '<div class="bigprice">' + fmtC(sel.sellPrice, sel.cur) + ' <span class="muted">(öneri satış' + (sel.size ? ', ' + esc(sel.size) : '') + ')</span></div>' +
       '<div class="row"><button class="primary" data-act="addcart" data-id="' + sel.id + '">Sepete ekle</button>' +
       '<button class="ghost" data-act="hist" data-id="' + sel.id + '">Fiyat geçmişi</button></div>' +
       (st.histOffer === sel.id ? histHtml(sel.id) : '') +
-      '<div class="internal">Alış ' + fmt(buyOf(sel)) + ' · Kâr ' + fmt((sel.sellPrice || 0) - (buyOf(sel) || 0)) + '</div>' +
+      '<div class="internal">Alış ' + fmtC(buyOf(sel), sel.cur) + ' · Kâr ' + fmtC((sel.sellPrice || 0) - (buyOf(sel) || 0), sel.cur) + '</div>' +
       '</div>' +
+      noImg +
+      verify +
+      (st.edit ? editForm(it, db.offers[st.edit] || sel) : '') +
+      (st.pick ? pickerHtml() : '') +
       '<div class="card"><h3>Tedarikçi teklifleri</h3>' + offs.map(offerRow).join('') + '</div>' +
       '<div class="card"><label>Not <input data-note="' + id + '" value="' + esc(it.note || '') + '"></label>' +
       '<div class="row"><button class="danger" data-act="delitem" data-id="' + id + '">Ürünü sil</button></div></div>' +
@@ -428,7 +517,8 @@
   }
   function viewCatalog() {
     var docs = db.docs.slice().reverse().map(function (d) {
-      return '<div class="row"><span><b>' + esc(d.name) + '</b><div class="muted">' + esc(d.supplier) + ' · ' + esc(d.date) + ' · ' + d.count + ' satır · ' + (d.kind === 'fiyat' ? 'fiyat listesi' : 'ana katalog') + '</div></span></div>';
+      return '<div class="row"><span><b>' + esc(d.name) + '</b><div class="muted">' + esc(d.supplier) + ' · ' + esc(d.date) + ' · ' + d.count + ' satır · ' + (d.kind === 'fiyat' ? 'fiyat listesi' : 'ana katalog') + '</div></span>' +
+        '<button class="link danger-text" data-act="deldoc" data-id="' + d.id + '">Sil</button></div>';
     }).join('');
     var h = '<div class="card"><h2>Belge yükle</h2>' +
       '<div class="muted">PDF, Excel (xlsx/xls), CSV veya TXT dosyası seçin. Okunan ürünleri kaydetmeden önce kontrol edersiniz.</div>' +
@@ -444,7 +534,7 @@
         '<div class="muted">' + d.rows.length + ' ürün okundu, ' + warn + ' tanesi kontrol gerektiriyor, ' + withImg + ' tanesine resim eşleşti.</div>' +
         '<div class="scroll"><table><tr><th>Kod</th><th>Ürün</th><th>Ölçü</th><th>Fiyat</th><th>Not</th></tr>' +
         d.rows.slice(0, 300).map(function (r) {
-          return '<tr><td>' + esc(r.code || '—') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.size) + '</td><td>' + fmt(r.price) + '</td><td>' + (r.warn ? '<span class="badge b-warn">' + esc(r.warn) + '</span>' : '') + '</td></tr>';
+          return '<tr><td>' + esc(r.code || '—') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.size) + '</td><td>' + fmtC(r.price, r.cur) + '</td><td>' + (r.warn ? '<span class="badge b-warn">' + esc(r.warn) + '</span>' : '') + '</td></tr>';
         }).join('') + '</table></div>' +
         (d.rows.length > 300 ? '<div class="muted">İlk 300 satır gösteriliyor, hepsi kaydedilecek.</div>' : '') +
         '<div class="row"><button class="primary" data-act="save">Kaydet</button><button class="ghost" data-act="cancel">İptal</button></div></div>';
@@ -454,73 +544,97 @@
   function viewCart() {
     var lines = db.cart.filter(function (l) { return db.offers[l.offerId]; });
     if (!lines.length) return '<div class="card"><p class="muted">Sepet boş. Ara sekmesinden ürün ekleyin.</p></div>';
-    var sellBefore = 0, buyTotal = 0, cust = [];
+    var sellBy = {}, buyBy = {}, cust = [];
     var rows = lines.map(function (l) {
       var o = db.offers[l.offerId], it = db.items[o.itemId] || { name: '?' };
+      var c = o.cur || 'TL';
       var amount = (o.sellPrice || 0) * l.qty * (1 - (l.disc || 0) / 100);
       var buy = (buyOf(o) || 0) * l.qty;
-      sellBefore += amount; buyTotal += buy;
-      cust.push({ name: it.name, code: o.code, size: o.size, qty: l.qty, amount: amount });
+      sellBy[c] = (sellBy[c] || 0) + amount; buyBy[c] = (buyBy[c] || 0) + buy;
+      cust.push({ name: it.name, code: o.code, size: o.size, qty: l.qty, amount: amount, cur: c });
       return '<div class="card pcard">' + thumb(it) + '<div class="ptxt"><b>' + esc(it.name) + '</b>' +
         '<div class="muted">' + esc(o.supplier) + ' · kod ' + esc(o.code || '—') + (o.size ? ' · ' + esc(o.size) : '') + '</div>' +
         '<div class="row"><span>Adet <input class="sm" type="number" min="1" data-qty="' + o.id + '" value="' + l.qty + '"></span>' +
         '<span>Kalem iskontosu <input class="sm" type="number" data-ldisc="' + o.id + '" value="' + (l.disc || 0) + '">%</span></div>' +
-        '<div class="row"><span>Satış ' + fmt(amount) + '</span><span class="internal">Alış ' + fmt(buy) + '</span>' +
+        '<div class="row"><span>Satış ' + fmtC(amount, c) + '</span><span class="internal">Alış ' + fmtC(buy, c) + '</span>' +
         '<button class="link" data-act="cartdel" data-id="' + o.id + '">Kaldır</button></div></div></div>';
     }).join('');
-    var cd = db.cartDiscount || 0, net = sellBefore * (1 - cd / 100), profit = net - buyTotal;
-    var custText = customerText(cust, cd, net);
+    var cd = db.cartDiscount || 0, curs = Object.keys(sellBy);
+    var totals = curs.map(function (c) {
+      var net = sellBy[c] * (1 - cd / 100), profit = net - buyBy[c];
+      return { c: c, net: net, profit: profit, buy: buyBy[c], sell: sellBy[c] };
+    });
+    var sumRows = totals.map(function (t) {
+      return '<div class="row"><span>' + t.c + ' · Net satış</span><b>' + fmtC(t.net, t.c) + '</b></div>' +
+        '<div class="row"><span>' + t.c + ' · Kâr</span><b style="color:' + (t.profit < 0 ? '#B91C1C' : '#065F46') + '">' + fmtC(t.profit, t.c) + '</b></div>' +
+        (t.net < t.buy ? '<div class="badge b-warn">Uyarı: ' + t.c + ' net satış alış fiyatının altında</div>' : '');
+    }).join('');
+    var custText = customerText(cust, cd, totals);
     return rows +
-      '<div class="card"><h3>Dahili özet</h3><div class="internal">Bu bölüm yalnızca sizde görünür.</div>' +
-      '<div class="row"><span>Toplam alış</span><b>' + fmt(buyTotal) + '</b></div>' +
-      '<div class="row"><span>Satış (iskonto öncesi)</span><b>' + fmt(sellBefore) + '</b></div>' +
+      '<div class="card"><h3>Dahili özet</h3><div class="internal">Bu bölüm yalnızca sizde görünür. Para birimleri ayrı toplanır, birbiriyle çevrilmez.</div>' +
       '<div class="row"><span>Sepet iskontosu %</span><input class="sm" type="number" id="cartDisc" value="' + cd + '"></div>' +
-      '<div class="row"><span>Net satış</span><b>' + fmt(net) + '</b></div>' +
-      '<div class="row"><span>Kâr</span><b style="color:' + (profit < 0 ? '#B91C1C' : '#065F46') + '">' + fmt(profit) + '</b></div>' +
-      (net < buyTotal ? '<div class="badge b-warn">Uyarı: net satış toplam alış fiyatının altında</div>' : '') +
+      sumRows +
       '<div class="row"><button class="ghost" data-act="cartclear">Sepeti boşalt</button></div></div>' +
       '<div class="card"><h3>Müşteri çıktısı</h3><div class="muted">Yalnızca satış fiyatları yer alır. Alış ve kâr görünmez.</div>' +
       '<pre id="cust">' + esc(custText) + '</pre>' +
       '<div class="row"><button data-act="print">Yazdır / PDF</button><button class="ghost" data-act="copy">Metni kopyala</button></div></div>';
   }
-  function customerText(cust, cd, net) {
+  function customerText(cust, cd, totals) {
     var s = db.settings, out = [];
     if (s.company) out.push(s.company);
     if (s.phone) out.push('Tel: ' + s.phone);
     out.push('Tarih: ' + today(), '');
     cust.forEach(function (c, i) {
-      out.push((i + 1) + '. ' + c.name + (c.code ? ' (' + c.code + ')' : '') + (c.size ? ' ' + c.size : '') + ' — ' + c.qty + ' adet — ' + fmt(c.amount));
+      out.push((i + 1) + '. ' + c.name + (c.code ? ' (' + c.code + ')' : '') + (c.size ? ' ' + c.size : '') + ' — ' + c.qty + ' adet — ' + fmtC(c.amount, c.cur));
     });
     if (cd) out.push('', 'İskonto: %' + cd);
-    out.push('Toplam (KDV hariç): ' + fmt(net));
+    totals.forEach(function (t) { out.push('Toplam (KDV hariç, ' + t.c + '): ' + fmtC(t.net, t.c)); });
     if (s.note) out.push('', s.note);
     return out.join('\n');
   }
-  function alerts() {
+  // Uyarılar: yalnızca ayarlarda açık olan türler gösterilir
+  var ALERT_KEYS = [['up', 'Fiyat yükseldi'], ['down', 'Fiyat düştü'], ['below', 'Satış alış fiyatının altında'], ['pending', 'Ana katalogda yok, bekliyor'], ['check', 'Kontrol gerekli']];
+  function allAlerts() {
     var out = [];
     Object.values(db.offers).forEach(function (o) {
       var it = db.items[o.itemId]; if (!it) return;
       var name = it.name + ' · ' + o.supplier + (o.code ? ' ' + o.code : '');
       var b = buyOf(o);
-      if (o.lastDir === 'up') out.push({ t: 'Fiyat yükseldi', d: name + ' — ' + fmt(o.listPrice), oid: o.id });
-      if (o.lastDir === 'down') out.push({ t: 'Fiyat düştü', d: name + ' — ' + fmt(o.listPrice), oid: o.id });
-      if (o.sellPrice != null && b != null && o.sellPrice < b) out.push({ t: 'Satış alış fiyatının altında', d: name + ' — satış ' + fmt(o.sellPrice) + ', alış ' + fmt(b) });
-      if (o.status === 'pending') out.push({ t: 'Ana katalogda yok, bekliyor', d: name });
-      if (o.status === 'check') out.push({ t: 'Kontrol gerekli', d: name });
+      if (o.lastDir === 'up') out.push({ k: 'up', d: name + ' — ' + fmtC(o.listPrice, o.cur), oid: o.id });
+      if (o.lastDir === 'down') out.push({ k: 'down', d: name + ' — ' + fmtC(o.listPrice, o.cur), oid: o.id });
+      if (o.sellPrice != null && b != null && o.sellPrice < b) out.push({ k: 'below', d: name + ' — satış ' + fmtC(o.sellPrice, o.cur) + ', alış ' + fmtC(b, o.cur) });
+      if (o.status === 'pending') out.push({ k: 'pending', d: name, itemId: o.itemId });
+      if (o.status === 'check') out.push({ k: 'check', d: name, itemId: o.itemId });
     });
     return out;
   }
+  function alerts() {
+    return allAlerts().filter(function (a) { return db.settings.notify[a.k] !== false; });
+  }
+  function bellLevel(list) {
+    if (list.some(function (a) { return a.k === 'below'; })) return 'red';
+    if (list.length) return 'yellow';
+    return 'green';
+  }
   function viewAlerts() {
-    var a = alerts();
-    if (!a.length) return '<div class="card"><p class="muted">Şu an uyarı yok.</p></div>';
-    return a.map(function (x) {
-      return '<div class="card"><b>' + esc(x.t) + '</b><div class="muted">' + esc(x.d) + '</div>' +
-        (x.oid ? '<div><button class="ghost" data-act="ack" data-id="' + x.oid + '">Gördüm</button></div>' : '') + '</div>';
+    var a = alerts(), checkCount = Object.values(db.items).filter(itemCheckNeeded).length;
+    var head = '<div class="card"><div class="row"><b>Kontrol bekleyen ürün: ' + checkCount + '</b>' +
+      '<button class="primary" data-act="nextcheck" data-id="">Kontrole başla</button></div></div>';
+    if (!a.length) return head + '<div class="card"><p class="muted">Seçili bildirim türlerinde uyarı yok. Türleri Ayarlar\'dan açıp kapatabilirsiniz.</p></div>';
+    return head + a.map(function (x) {
+      var label = ALERT_KEYS.filter(function (k) { return k[0] === x.k; })[0][1];
+      return '<div class="card"><b>' + esc(label) + '</b><div class="muted">' + esc(x.d) + '</div>' +
+        (x.oid ? '<div><button class="ghost" data-act="ack" data-id="' + x.oid + '">Gördüm</button></div>' : '') +
+        (x.itemId ? '<div><button class="ghost" data-act="openitem" data-id="' + x.itemId + '">Ürüne git</button></div>' : '') + '</div>';
     }).join('');
   }
   function viewSettings() {
     var s = db.settings;
-    return '<div class="card"><h3>Firma bilgileri (müşteri çıktısında görünür)</h3>' +
+    var notify = ALERT_KEYS.map(function (k) {
+      return '<label style="flex-direction:row;align-items:center;gap:8px"><input type="checkbox" data-notify="' + k[0] + '"' + (s.notify[k[0]] !== false ? ' checked' : '') + '> ' + k[1] + '</label>';
+    }).join('');
+    return '<div class="card"><h3>Bildirimler</h3><div class="muted">Hangi uyarıların görüneceğini seçin. Zil rengi: kırmızı = satış alış altında, sarı = diğer uyarılar, yeşil = uyarı yok.</div>' + notify + '</div>' +
+      '<div class="card"><h3>Firma bilgileri (müşteri çıktısında görünür)</h3>' +
       '<label>Firma adı <input data-set="company" value="' + esc(s.company) + '"></label>' +
       '<label>Telefon <input data-set="phone" value="' + esc(s.phone) + '"></label>' +
       '<label>Teklif notu <input data-set="note" value="' + esc(s.note) + '"></label></div>' +
@@ -531,12 +645,15 @@
   }
 
   // ---------- Çizim ve olaylar ----------
+  function bellClass(level) { return 'bell bell-' + level; }
   function render() {
     document.querySelectorAll('nav.tabs button[data-tab]').forEach(function (b) {
       b.classList.toggle('on', b.dataset.tab === st.tab && !st.item);
     });
+    var al = alerts();
     $('#cartBadge').textContent = db.cart.length;
-    $('#alertBadge').textContent = alerts().length;
+    $('#alertBadge').textContent = al.length;
+    var bell = $('#bell'); bell.className = bellClass(bellLevel(al)); bell.querySelector('span').textContent = al.length || '';
     var v = $('#view');
     if (st.item) v.innerHTML = viewItem(st.item);
     else if (st.tab === 'ara') { v.innerHTML = viewSearch(); drawResults(); }
@@ -545,14 +662,37 @@
     else if (st.tab === 'uyari') v.innerHTML = viewAlerts();
     else if (st.tab === 'ayar') v.innerHTML = viewSettings();
     hydrateImages(v);
+    if (st.item && st.pick) loadPicker();
     window.scrollTo(0, 0);
   }
-  function go(tab) { st.tab = tab; st.item = null; render(); }
-  function openItem(id) { st.item = id; st.variant = null; render(); }
+  function go(tab) { st.tab = tab; st.item = null; st.edit = null; st.pick = false; render(); }
+  function openItem(id) { st.item = id; st.variant = null; st.edit = null; st.pick = false; render(); }
   function addCart(oid) {
     var l = db.cart.find(function (x) { return x.offerId === oid; });
     if (l) l.qty++; else db.cart.push({ offerId: oid, qty: 1, disc: 0 });
     save(); toast('Sepete eklendi');
+  }
+  function nextCheck(fromId) {
+    var list = Object.values(db.items).filter(itemCheckNeeded).sort(function (a, b) { return a.name.localeCompare(b.name, 'tr'); });
+    var next = list.filter(function (it) { return it.id !== fromId; })[0];
+    if (!next) { toast('Kontrol edilecek ürün kalmadı'); return; }
+    openItem(next.id);
+  }
+  function loadPicker() {
+    var el = $('#picker'); if (!el) return;
+    var it = db.items[st.item];
+    var docIds = Array.from(new Set(offersOf(st.item).map(function (o) { return o.docId; }).filter(Boolean)));
+    Promise.all(docIds.map(function (d) {
+      return kvGet('doc:' + d).then(function (arr) { return (arr || []).map(function (x) { return { url: x.url, page: x.page, doc: d }; }); });
+    })).then(function (groups) {
+      var list = [].concat.apply([], groups);
+      st.pickList = list;
+      if (!list.length) { el.innerHTML = '<span class="muted">Bu belgede resim bulunamadı. Web\'de görsel arayabilirsiniz.</span>'; return; }
+      el.innerHTML = list.map(function (x, i) {
+        return '<button class="pickbtn" data-act="pickone" data-id="' + i + '"><img alt="" src="' + x.url + '"><small>Sayfa ' + x.page + '</small></button>';
+      }).join('');
+      if (!it) el.innerHTML = '';
+    });
   }
   async function readDraft() {
     var supplier = ($('#supName').value || '').trim(), kind = $('#kind').value, f = $('#docFile').files[0];
@@ -562,17 +702,29 @@
     var msg = $('#readMsg'); msg.textContent = 'Okunuyor...';
     try {
       var res = await readFile(f, function (p, n) { msg.textContent = 'Sayfa ' + p + ' / ' + n + ' okunuyor...'; });
-      st.draft = { rows: prepDraft(res.rows), supplier: supplier, kind: kind, name: f.name };
+      st.draft = { rows: prepDraft(res.rows), images: res.images, supplier: supplier, kind: kind, name: f.name, docId: uid() };
       if (!res.rows.length) toast(res.textLength < 20 ? 'Belgede metin bulunamadı. Taranmış (resim) PDF olabilir.' : 'Belgede ürün satırı bulunamadı.');
     } catch (err) { st.draft = null; msg.textContent = 'Okunamadı: ' + err.message; return; }
     render();
   }
   function saveDraft() {
     var d = st.draft; if (!d) return;
-    var r = commit(d.rows, d.supplier, d.kind, d.name);
+    var r = commit(d);
     st.draft = null;
     toast('Kaydedildi: ' + r.created + ' yeni, ' + r.updated + ' güncellendi, ' + r.changed + ' fiyat değişti' + (r.pending ? ', ' + r.pending + ' ana katalog bekliyor' : ''));
     render();
+  }
+  function saveEdit(oid) {
+    var o = db.offers[oid], it = db.items[o && o.itemId];
+    if (!o || !it) return;
+    it.name = ($('#e_name').value || '').trim() || it.name;
+    it.brand = ($('#e_brand').value || '').trim() || it.brand;
+    o.code = ($('#e_code').value || '').trim(); o.key = codeKey(o.code);
+    o.size = ($('#e_size').value || '').trim();
+    var p = $('#e_price').value; if (p !== '') { var np = num(p); if (np !== o.listPrice) { o.listPrice = np; o.sellPrice = np; } }
+    o.cur = $('#e_cur').value;
+    if (o.status === 'check' && o.code) o.status = 'ok';
+    st.edit = null; save(); toast('Kaydedildi'); render();
   }
   function exportData() {
     var blob = new Blob([JSON.stringify(db, null, 2)], { type: 'application/json' });
@@ -587,30 +739,47 @@
   document.addEventListener('click', function (e) {
     var el = e.target.closest('[data-act],[data-tab],[data-item]');
     if (!el) return;
+    if (el.tagName === 'A') return;
     if (el.dataset.tab) return go(el.dataset.tab);
     if (el.dataset.item && !el.dataset.act) return openItem(el.dataset.item);
     var id = el.dataset.id;
     switch (el.dataset.act) {
-      case 'back': st.item = null; render(); break;
-      case 'variant': st.variant = id; render(); break;
+      case 'back': st.item = null; st.edit = null; st.pick = false; render(); break;
+      case 'filter': st.filter = id; render(); break;
+      case 'openitem': openItem(id); break;
+      case 'variant': st.variant = id; st.edit = null; render(); break;
       case 'addcart': addCart(id); break;
       case 'hist': st.histOffer = st.histOffer === id ? null : id; render(); break;
       case 'ack': if (db.offers[id]) { db.offers[id].lastDir = null; save(); } render(); break;
-      case 'merge': mergeItems(id, st.item); render(); toast('Ürünler birleştirildi'); break;
+      case 'merge': mergeItems(id, st.item); toast('Ürünler birleştirildi'); render(); break;
+      case 'verify': if (db.items[id]) { db.items[id].verified = true; offersOf(id).forEach(function (o) { if (o.status === 'check') o.status = 'ok'; }); save(); toast('Doğrulandı'); nextCheck(id); } break;
+      case 'nextcheck': nextCheck(id || st.item); break;
+      case 'edit': st.edit = id; render(); break;
+      case 'canceledit': st.edit = null; render(); break;
+      case 'saveedit': saveEdit(id); break;
+      case 'pickimg': st.pick = true; render(); break;
+      case 'closepick': st.pick = false; render(); break;
+      case 'pickone': {
+        var pick = st.pickList[Number(id)];
+        if (pick && st.item) { kvPut('item:' + st.item, pick.url); db.items[st.item].hasImg = true; save(); st.pick = false; toast('Resim seçildi'); render(); }
+        break;
+      }
       case 'delitem':
         if (!confirm('Bu ürün ve tüm teklifleri silinsin mi?')) break;
         offersOf(id).forEach(function (o) { delete db.offers[o.id]; });
-        delete db.items[id]; delete imgCache[id];
-        if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').delete(id); } catch (e2) {}
+        delete db.items[id]; kvDel('item:' + id);
         db.cart = db.cart.filter(function (l) { return db.offers[l.offerId]; });
         st.item = null; save(); render(); break;
+      case 'deldoc':
+        if (!confirm('Bu belge ve belgeden gelen ürünler silinsin mi? (Başka belgeden gelen teklifler kalır)')) break;
+        deleteDoc(id); toast('Belge silindi'); render(); break;
       case 'cartdel': db.cart = db.cart.filter(function (l) { return l.offerId !== id; }); save(); render(); break;
       case 'cartclear': if (confirm('Sepet boşaltılsın mı?')) { db.cart = []; save(); render(); } break;
       case 'read': readDraft(); break;
       case 'save': saveDraft(); break;
       case 'cancel': st.draft = null; render(); break;
       case 'export': exportData(); break;
-      case 'wipe': if (confirm('Tüm veriler silinsin mi? Bu işlem geri alınamaz.')) { db = empty(); imgCache = {}; if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').clear(); } catch (e3) {} save(); render(); } break;
+      case 'wipe': if (confirm('Tüm veriler silinsin mi? Bu işlem geri alınamaz.')) { db = empty(); kvClear(); save(); render(); } break;
       case 'print': window.print(); break;
       case 'copy': copyText(); break;
     }
@@ -622,11 +791,13 @@
     var t = e.target, d = t.dataset;
     if (d.sell) { var o = db.offers[d.sell]; if (o) o.sellPrice = t.value === '' ? null : num(t.value); save(); if (st.item) render(); }
     else if (d.disc) { var o2 = db.offers[d.disc]; if (o2) o2.supDisc = num(t.value); save(); if (st.item) render(); }
+    else if (d.cur) { var o3 = db.offers[d.cur]; if (o3) o3.cur = t.value; save(); render(); }
     else if (d.note) { if (db.items[d.note]) db.items[d.note].note = t.value; save(); }
     else if (d.qty) { var l = db.cart.find(function (x) { return x.offerId === d.qty; }); if (l) l.qty = Math.max(1, Math.round(num(t.value)) || 1); save(); render(); }
     else if (d.ldisc) { var l2 = db.cart.find(function (x) { return x.offerId === d.ldisc; }); if (l2) l2.disc = num(t.value); save(); render(); }
     else if (t.id === 'cartDisc') { db.cartDiscount = num(t.value); save(); render(); }
     else if (d.set) { db.settings[d.set] = t.value; save(); }
+    else if (d.notify) { db.settings.notify[d.notify] = t.checked; save(); render(); }
     else if (t.id === 'importFile' && t.files[0]) {
       t.files[0].text().then(function (txt) {
         try { db = Object.assign(empty(), JSON.parse(txt)); save(); toast('Yedek yüklendi'); render(); }
