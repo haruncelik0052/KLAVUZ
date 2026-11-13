@@ -48,7 +48,7 @@ Not: Workflow `index.html app.js okuyucu.js manifest.json icon.svg` dosyaların�
 - TeklifX ve Google Drive entegrasyonu ilk sürüme alınmadı; sonraki aşama.
 - Web'den ürün ekleme ve resim çekme sonraki aşama.
 
-## Mevcut durum (sürüm 0.2.0)
+## Mevcut durum (sürüm 0.2.0 ve 0.3.0)
 
 Bu sürümde yapılanlar:
 - Belge okuyucu tablo mantığıyla yeniden yazıldı (`okuyucu.js`): tablo başlığı ürün adı olur, sütun adları kod / ölçü / fiyat / özellik olarak eşlenir, bir resim yanındaki tablonun tüm satırlarına bağlanır. Yan yana tablolar ve tablonun yanındaki açıklama yazıları ayrılır.
@@ -67,9 +67,27 @@ Testler:
 
 Dal notu: 0.2.0 çalışması `ccr-2f65d271-hbxt5y` dalında yapıldı (`ilk-surum` üzerine). APK iş akışı bu dalda da çalışır.
 
+## Sürüm 0.3.0 ekleri
+
+- Okuyucu: sayfa başlığını ürün adı olarak alma (tablodan uzakta olsa da), iki dilli ve çok satırlı sütun başlıkları, birleşik hücreler (SERİ, TİP) bütün satırlara yayılır, aynı tabloda çift kod + fiyat (TAKIM / GÖVDE) ayrı teklif olur, sayfaya sütun sütun dizilmiş küçük tablolar ayrılır, kodu ve fiyatı olmayan bilgi tabloları ürün sayılmaz, web adresi / e-posta ürün adı olmaz.
+- Resim: adaylar içinden fotoğraf, teknik çizime tercih edilir.
+- Okuma raporu: her belge için ürün / satır / resim sayıları, uyarı nedenleri ve örnekleri. Belge sekmesinde "Rapor" düğmesi; WhatsApp ile paylaşılır. Uyarı nedeni teklifte saklanır (`offer.why`) ve ürün sayfasında görünür.
+- Ada firma profili (JSON) yükleme: Ayarlar > Firma bilgileri.
+- Sürüm testi maddeleri markaya değil sisteme yönelik (kullanıcı isteği).
+- Kullanıcının katalogları Google Drive'da: KATALOG klasörü (kullanıcı bağlantıyı sohbette verir). Okuyucu hataları oradaki gerçek PDF'lerle tekrarlanıp düzeltilir.
+
+Ölçülen sonuç (0.2.0 -> 0.3.0): Boss kataloğunda "kontrol gerekli" 2.067 -> 6 satır (3.048 kod, 135 ürün); Asel'de 241 -> 14 satır (1.124 kod, 129 ürün).
+
+## Kullanıcıyla konuşulan, henüz yapılmayan tasarım kararları
+
+- Marka ve satıcı ayrı olacak: marka = ürünler, resimler, teknik bilgiler, sertifikalar; satıcı = fiyat, iskonto, iletişim, sipariş. Şu an ikisi `supplier` / `brand` alanında karışık.
+- Kategori ağacı (Rakor, Vana, Hortum, Flanş, Depo...), süzgeçler (marka, malzeme, bağlantı tipi, ölçü) ve tarifle arama (Türkçe-İngilizce eş anlamlılar).
+- Marka paketi: ana katalog burada okunup doğrulanır, uygulamaya tek dosya olarak yüklenir.
+- Veri büyüdükçe `localStorage` sınırı (yaklaşık 5 MB) dolabilir; üç katalogla 1,6 MB. Veriyi IndexedDB'ye taşımak gerekecek.
+
 ## Açık işler (öncelik sırasıyla)
 
-1. Kullanıcının 0.2.0 telefon geri bildirimini bekle (Ayarlar > Sürüm testi). Doğrulanmadı: WebView'da resimlerin kalıcılığı, paylaşım ve yedek kaydetme pencereleri.
+1. Kullanıcının 0.3.0 telefon geri bildirimini bekle (Ayarlar > Sürüm testi). Doğrulanmadı: WebView'da resimlerin kalıcılığı, paylaşım ve yedek kaydetme pencereleri.
 2. OCR: taranmış PDF'ler ve tabloları resim olan kataloglar (örn. Flowmaster) okunamıyor.
 3. Karşılaştırma ekranı: aynı ürünün teklif ve varyantlarını yan yana gösterme.
 4. "Kontrole başla" akışını iyileştirme.

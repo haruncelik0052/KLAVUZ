@@ -44,29 +44,38 @@
     return rows;
   }
 
-  // Yan yana iki tablo: başlık satırı kendini tekrar ediyorsa (DN CODE ... DN CODE ...) sayfayı ikiye böl
-  function findSplit(rows) {
-    for (var i = 0; i < rows.length; i++) {
-      var c = rows[i].cells, n = c.length;
-      if (n < 6 || n % 2) continue;
-      var half = n / 2, same = true;
-      for (var k = 0; k < half; k++) if (fold(c[k].text) !== fold(c[k + half].text)) { same = false; break; }
-      if (same && !hasDigit(c[0].text)) return (c[half - 1].x1 + c[half].x0) / 2;
+  // Yan yana tablolar: başlık satırı kendini tekrar ediyorsa (KOD BOYUT TL | KOD BOYUT TL | ...) bölme yerlerini bul
+  function repeatSplits(r) {
+    var c = r.cells, n = c.length;
+    if (n < 4) return null;
+    for (var p = 2; p <= n / 2; p++) {
+      if (n % p) continue;
+      var same = true;
+      for (var k = p; k < n && same; k++) if (fold(c[k].text) !== fold(c[k - p].text)) same = false;
+      if (!same) continue;
+      var numeric = false;
+      for (var q = 0; q < p; q++) if (isNum(c[q].text)) numeric = true;
+      if (numeric) continue;
+      var xs = [];
+      for (var g = p; g < n; g += p) xs.push((c[g - 1].x1 + c[g].x0) / 2);
+      return xs;
     }
     return null;
   }
-
+  // Sayısal hücre: rakamla başlar (ölçü, fiyat, adet). "D1", "SW3" gibi sütun adları sayısal değildir.
+  function isNum(t) { return /^[\d(+\-ØøO]?\s?\d/.test(t); }
   function isDataRow(r) {
-    if (r.cells.length < 3) return false;
-    var d = r.cells.filter(function (c) { return hasDigit(c.text); }).length;
-    return d / r.cells.length >= 0.5;
+    var n = r.cells.length;
+    if (n < 3) return false;
+    var d = r.cells.filter(function (c) { return isNum(c.text); }).length;
+    return d >= Math.max(2, Math.ceil(n * 0.4));
   }
 
   // ---- Sütun rolleri ----
   var RE_CODE = /(^|[^a-z])(code|kod|kodu|art|part ?no|ref|stok|siparis|item ?no|urun no|model)([^a-z]|$)/;
   var RE_PRICE = /fiyat|price|tutar|bedel/;
   var RE_VAT = /kdv ?li|kdv dahil|kdvli|incl/;
-  var RE_SIZE = /(^|[^a-z])(dn|size|olcu|ebat|cap|litre|hacim|nps|boyut|anma|nominal)([^a-z]|$)/;
+  var RE_SIZE = /(^|[^a-z])(dn|size|olcu[a-z]*|ebat|cap|capi|litre|hacim|nps|boyut[a-z]*|anma|nominal)([^a-z]|$)/;
   var RE_UNIT = /(^|\s)(mm|cm|inch|inc|bar|lt|kg|m)$/;
   function looksCode(v) { return /^[A-Za-z0-9][A-Za-z0-9\-\/\.]{4,}$/.test(v) && hasDigit(v) && !/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(v) && !/,/.test(v); }
   function looksMoney(v) { return /^\d{1,3}(\.\d{3})*,\d{2}$/.test(v) || /^\d+,\d{2}$/.test(v); }
@@ -90,11 +99,15 @@
     while (i < rows.length) {
       if (!isDataRow(rows[i])) { i++; continue; }
       // Veri satırlarını topla. Tablonun solunda/sağında kalan açıklama yazıları araya girerse atla.
-      var idx = [i], j = i, coreX = firstDigitX(rows[i]), n0 = i + 1;
+      var idx = [i], j = i, coreX = firstDigitX(rows[i]), n0 = i + 1, floats = [];
       while (n0 < rows.length) {
         var nr = rows[n0], lastD = rows[idx[idx.length - 1]];
         if (lastD.y - nr.y > 40) break;
         if (isDataRow(nr)) { idx.push(n0); j = n0; coreX = Math.min(coreX, firstDigitX(nr)); n0++; continue; }
+        // Birleşik hücrenin ortasına yazılmış kısa etiket (SERİ, TİP değeri) satırların arasına düşer
+        if (nr.cells.length <= 2 && nr.cells.every(function (c) { return c.text.length <= 10; }) && n0 + 1 < rows.length && isDataRow(rows[n0 + 1]) && lastD.y - rows[n0 + 1].y < 40) {
+          nr.cells.forEach(function (c) { floats.push({ text: c.text, x0: c.x0, x1: c.x1, y: nr.y }); }); used[n0] = true; n0++; continue;
+        }
         if (nr.x1 < coreX - 3) { n0++; continue; }
         break;
       }
@@ -106,6 +119,7 @@
       // Sütunlar: veri hücrelerinin yatay aralıkları üst üste biniyorsa aynı sütun
       var width = rx1 - rx0, iv = [];
       data.forEach(function (r) { r.cells.forEach(function (c) { if (c.x1 - c.x0 < width * 0.4) iv.push([c.x0, c.x1]); }); });
+      floats.forEach(function (c) { iv.push([c.x0, c.x1]); });
       iv.sort(function (a, b) { return a[0] - b[0]; });
       var cols = [];
       iv.forEach(function (v) {
@@ -155,7 +169,7 @@
         if (!cs0.length) continue;
         if (rows[s].y - lastY > 60) break;
         seen++;
-        var dg = cs0.filter(function (c) { return hasDigit(c.text); }).length;
+        var dg = cs0.filter(function (c) { return isNum(c.text); }).length;
         if (cs0.length >= 2 && dg / cs0.length < 0.5) topHead = s;
         else if (!(cs0.length === 1 && cs0[0].text.length <= 14 && cs0[0].x1 - cs0[0].x0 < width * 0.3)) break;
         lastY = rows[s].y;
@@ -177,81 +191,136 @@
       });
       cols.forEach(function (col) { col.label = col.labels.join(' ').replace(/\s+/g, ' ').trim(); col.f = fold(col.label); });
 
+      // Birleşik hücreli sütunlar (SERİ, TİP): değer birkaç satırda yazılıdır, en yakın satırlara yayılır
+      cols.forEach(function (col, n) {
+        if (!/(^|[^a-z])(seri|serie|series|tip|type|grup|group)([^a-z]|$)/.test(col.f) || RE_CODE.test(col.f)) return;
+        var f = fill(n); if (f > 0.5) return;
+        var marks = []; grid.forEach(function (g, i) { if (g[n]) marks.push({ y: data[i].y, v: g[n] }); });
+        floats.forEach(function (c) { if (colOf(c) === n) marks.push({ y: c.y, v: c.text }); });
+        if (!marks.length) return;
+        grid.forEach(function (g, i) {
+          var best = marks[0];
+          marks.forEach(function (m) { if (Math.abs(m.y - data[i].y) < Math.abs(best.y - data[i].y)) best = m; });
+          g[n] = best.v;
+        });
+        col.spread = /(tip|type)/.test(col.f) ? 'tip' : 'seri';
+      });
+
       // Roller
       var role = cols.map(function () { return 'spec'; }), codeC = -1, priceC = -1, vatC = -1, sizeC = -1;
-      cols.forEach(function (col, n) { if (codeC < 0 && RE_CODE.test(col.f) && share(n, hasDigit) >= 0.5) codeC = n; });
-      if (codeC < 0) for (var n1 = 0; n1 < cols.length; n1++) {
-        if (share(n1, looksCode) >= 0.8 && fill(n1) >= 0.8 && share(n1, function (v) { return /[A-Za-z]/.test(v) || v.length >= 6; }) >= 0.8) { codeC = n1; break; }
+      var codeCols = [], priceCols = [];
+      cols.forEach(function (col, n) { if (RE_CODE.test(col.f) && share(n, hasDigit) >= 0.5) codeCols.push(n); });
+      if (!codeCols.length) for (var n1 = 0; n1 < cols.length; n1++) {
+        if (share(n1, looksCode) >= 0.8 && fill(n1) >= 0.8 && share(n1, function (v) { return /[A-Za-z]/.test(v) || v.length >= 6; }) >= 0.8) { codeCols.push(n1); break; }
       }
+      codeC = codeCols.length ? codeCols[0] : -1;
       cols.forEach(function (col, n) {
-        if (n === codeC) return;
+        if (codeCols.indexOf(n) >= 0) return;
         if (RE_VAT.test(col.f)) { if (vatC < 0) vatC = n; }
-        else if (RE_PRICE.test(col.f)) { if (priceC < 0) priceC = n; }
+        else if (RE_PRICE.test(col.f) || (/^(tl|eur|usd|euro|€|\$)$/.test(col.f) && share(n, isNum) >= 0.8)) priceCols.push(n);
       });
-      if (priceC < 0 && vatC < 0) {
-        var money = []; cols.forEach(function (col, n) { if (n !== codeC && share(n, looksMoney) >= 0.9 && fill(n) >= 0.8) money.push(n); });
-        if (money.length) { priceC = money[0]; if (money.length > 1) vatC = money[money.length - 1]; }
+      if (!priceCols.length && vatC < 0) {
+        cols.forEach(function (col, n) { if (codeCols.indexOf(n) < 0 && share(n, looksMoney) >= 0.9 && fill(n) >= 0.8) priceCols.push(n); });
+        if (priceCols.length > 1) { vatC = priceCols[priceCols.length - 1]; priceCols = [priceCols[0]]; }
       }
+      priceC = priceCols.length ? priceCols[0] : -1;
+      // Aynı tabloda birden çok kod + fiyat çifti (örn. TAKIM ve GÖVDE): her çift ayrı tekliftir
+      var pairs = [];
+      if (codeCols.length >= 2 && priceCols.length >= 2) {
+        codeCols.forEach(function (cc, i) {
+          var next = i + 1 < codeCols.length ? codeCols[i + 1] : cols.length;
+          var pc = priceCols.filter(function (x) { return x > cc && x < next; })[0];
+          var lab = cols[cc].label.replace(/\b(KOD|CODE|KODU)\b/gi, ' ').replace(/\s+/g, ' ').trim();
+          pairs.push({ code: cc, price: pc == null ? -1 : pc, variant: lab.split('/')[0].trim() });
+        });
+      }
+      codeCols.forEach(function (n) { role[n] = 'code'; });
+      priceCols.forEach(function (n) { role[n] = 'price'; });
       cols.forEach(function (col, n) {
-        if (n === codeC || n === priceC || n === vatC) return;
+        if (role[n] !== 'spec' || n === vatC || col.spread) return;
         if (sizeC < 0 && RE_SIZE.test(col.f)) sizeC = n;
       });
       if (sizeC < 0) for (var n2 = 0; n2 < cols.length; n2++) {
-        if (n2 === codeC || n2 === priceC || n2 === vatC) continue;
+        if (role[n2] !== 'spec' || n2 === vatC || cols[n2].spread) continue;
         if (fill(n2) >= 0.9) { sizeC = n2; break; }
       }
-      if (codeC >= 0) role[codeC] = 'code';
-      if (priceC >= 0) role[priceC] = 'price';
       if (vatC >= 0) role[vatC] = 'vat';
       if (sizeC >= 0) role[sizeC] = 'size';
 
-      // Ürün adı: tablonun üstündeki başlık (bir ya da iki satır)
-      var name = '', sub = '', topY = (head[0] || rows[i]).y, titleRow = null, looked = 0;
+      // Ürün adı: tablonun üstündeki başlık (bir ya da iki satır). Yakında yoksa sayfanın üst başlığı.
+      function isTitle(tt) { return tt.length >= 4 && RE_LET.test(tt) && !/www\.|@|https?:|e-?mail|web:/i.test(tt); }
+      var name = '', sub = '', topY = (head[0] || rows[i]).y, titleRow = null, looked = 0, far = false;
       for (var t = k; t >= 0 && looked < 3; t--) {
         var tr = rows[t], tt = textIn(tr);
         if (!tt) continue;
         if (tr.y - topY > 75 || isDataRow(tr)) break;
         looked++;
-        if (tt.length < 4 || !RE_LET.test(tt)) continue;
+        if (!isTitle(tt)) continue;
         // Başlığın üst satırına taşmış tek kelimelik sütun adı (örn. PRODUCT / CODE) ürün adı değildir
         var ci = inRange(tr);
         if (head.length && ci.length === 1 && tt.length <= 14 && !/\s/.test(tt) && tr.y - topY < tr.h * 2.2) { ci.forEach(function (c) { var n = colOf(c); if (n >= 0) { cols[n].label = (c.text + ' ' + cols[n].label).trim(); cols[n].f = fold(cols[n].label); } }); used[t] = true; continue; }
         titleRow = t; break;
       }
+      if (titleRow == null) {
+        for (var t3 = k; t3 >= 0; t3--) {
+          if (isDataRow(rows[t3])) break;
+          if (used[t3] || !isTitle(rows[t3].text) || rows[t3].text.length > 90) continue;
+          titleRow = t3; far = true; break;
+        }
+      }
+      var tText = far ? function (r) { return r.text; } : textIn;
       if (titleRow != null) {
-        var t1 = rows[titleRow]; name = textIn(t1); used[titleRow] = true; topY = t1.y;
+        var t1 = rows[titleRow]; name = tText(t1); used[titleRow] = true; if (!far) topY = t1.y;
         for (var u0 = titleRow - 1; u0 >= 0; u0--) {
-          var up = rows[u0], ut = textIn(up);
+          var up = rows[u0], ut = tText(up);
           if (!ut) continue;
-          if (!isDataRow(up) && (up.y - t1.y) < Math.max(t1.h, up.h) * 2.2 && RE_LET.test(ut) && ut.length >= 4) { sub = name; name = ut; used[u0] = true; topY = up.y; }
+          if (!isDataRow(up) && (up.y - t1.y) < Math.max(t1.h, up.h) * 2.2 && isTitle(ut)) {
+            sub = name; name = ut; used[u0] = true; if (!far) topY = up.y;
+            // Üç satırlı başlık (örn. "PN 16 KÜRESEL VANA" / "TAM GEÇİŞLİ" / "Full Bore Ball Valve"): ilk iki satır addır
+            for (var u1 = u0 - 1; u1 >= 0 && !far; u1--) {
+              var up2 = rows[u1], ut2 = tText(up2);
+              if (!ut2) continue;
+              if (!isDataRow(up2) && (up2.y - up.y) < Math.max(up.h, up2.h) * 1.6 && isTitle(ut2) && Math.abs(up2.h - up.h) < 1.5) { name = ut2 + ' ' + name; used[u1] = true; topY = up2.y; }
+              break;
+            }
+          }
           break;
         }
       }
       var cur = curOf(head.map(function (h) { return h.text; }).join(' ') + ' ' + name);
 
-      var out = grid.map(function (g, n) {
-        var specs = [], prev = null;
+      var out = [];
+      grid.forEach(function (g, n) {
+        var specs = [], prev = null, tip = '';
         cols.forEach(function (col, c) {
           if (role[c] !== 'spec' || !g[c]) return;
+          if (col.spread === 'tip') { tip = g[c]; return; }
           // Aynı başlığın altındaki yan yana sütunlar tek özelliktir (örn. "Holes x Dia": 4 x 12)
           if (prev && prev.label && prev.label === col.label && prev.c === c - 1) { prev.val += (/\sx\s/i.test(col.label) ? ' x ' : ' ') + g[c]; prev.c = c; }
           else { prev = { label: col.label, val: g[c], c: c }; specs.push(prev); }
         });
         var size = sizeC >= 0 ? g[sizeC] : '';
         if (size) { var um = cols[sizeC].f.match(RE_UNIT); if (um && /^[\d.,\/ ]+$/.test(size)) size += ' ' + um[2]; else if (/^dn$/.test(cols[sizeC].f) && /^\d+$/.test(size)) size = 'DN' + size; }
-        var p = priceC >= 0 ? g[priceC] : (vatC >= 0 ? g[vatC] : '');
-        return {
-          code: codeC >= 0 ? g[codeC] : '', size: size, price: p ? toNum(p) : null, cur: p && curOf(p) !== 'TL' ? curOf(p) : cur,
-          priceVat: vatC >= 0 && priceC >= 0 && g[vatC] ? toNum(g[vatC]) : null,
-          specs: specs.map(function (x) { return (x.label ? x.label + ' ' : '') + x.val; }).join(' · '), y: data[n].y
-        };
-      }).filter(function (r) { return r.code || r.size || r.price != null; });
+        if (tip) size = (size + ' ' + tip).trim();
+        var specText = specs.map(function (x) { return (x.label ? x.label + ' ' : '') + x.val; }).join(' · ');
+        function mk(code, p, variant, pv) {
+          return { code: code || '', size: size, variant: variant || '', price: p ? toNum(p) : null, cur: p && curOf(p) !== 'TL' ? curOf(p) : cur,
+            priceVat: pv ? toNum(pv) : null, specs: specText, y: data[n].y };
+        }
+        if (pairs.length) {
+          pairs.forEach(function (pr) { if (g[pr.code]) out.push(mk(g[pr.code], pr.price >= 0 ? g[pr.price] : '', pr.variant, '')); });
+        } else {
+          var p = priceC >= 0 ? g[priceC] : (vatC >= 0 ? g[vatC] : '');
+          out.push(mk(codeC >= 0 ? g[codeC] : '', p, '', vatC >= 0 && priceC >= 0 ? g[vatC] : ''));
+        }
+      });
+      out = out.filter(function (r) { return r.code || r.size || r.price != null; });
 
       idx.forEach(function (n) { used[n] = true; });
       if (out.length >= 2) {
         tables.push({
           page: pageNo, name: cleanTitle(name), sub: cleanTitle(sub), rows: out,
-          hasCode: codeC >= 0, hasPrice: priceC >= 0 || vatC >= 0,
+          hasCode: codeC >= 0, hasPrice: priceC >= 0 || vatC >= 0, far: far,
           columns: cols.map(function (c, n) { return { label: c.label, role: role[n] }; }),
           box: { x0: tx0, x1: tx1, y0: rows[j].y - rows[j].h, y1: topY + 10 }
         });
@@ -275,31 +344,86 @@
     good.forEach(function (m, n) {
       var best = null, bd = Infinity;
       tables.forEach(function (t) { var d = gapDist(t.box, m); if (d < bd) { bd = d; best = t; } });
-      if (best && bd <= 170) {
+      if (best && bd <= (best.far ? 420 : 170)) {
         var score = m.w * m.h / (1 + bd / 40);
+        (best._c = best._c || []).push({ id: m.id, score: score });
         if (!best._img || score > best._score) { best._img = m; best._score = score; }
       }
     });
     if (tables.length === 1 && !tables[0]._img && good.length) {
       tables[0]._img = good.slice().sort(function (a, b) { return b.w * b.h - a.w * a.h; })[0];
     }
-    tables.forEach(function (t) { t.img = t._img ? t._img.id : null; delete t._img; delete t._score; });
+    // img: en uygun resim; imgs: adaylar (uygulama teknik çizim yerine fotoğrafı seçebilsin)
+    tables.forEach(function (t) {
+      t.img = t._img ? t._img.id : null;
+      t.imgs = (t._c || []).sort(function (a, b) { return b.score - a.score; }).map(function (c) { return c.id; });
+      if (t.img != null && t.imgs.indexOf(t.img) < 0) t.imgs.unshift(t.img);
+      delete t._img; delete t._score; delete t._c;
+    });
   }
 
   // ---- Bir sayfayı oku ----
   // items: yazılar, images: [{id, x, y, w, h}] (PDF koordinatı, sol alt köşe)
   function parsePage(items, images, pageNo) {
-    var rows = buildRows(items), split = findSplit(rows), parts;
-    if (split != null) {
-      parts = [items.filter(function (i) { return i.x + i.w / 2 < split; }), items.filter(function (i) { return i.x + i.w / 2 >= split; })];
-    } else parts = [items];
+    var rows = buildRows(items), parts = [], rest = items.slice();
+    // Sayfa birkaç sütuna dizilmiş küçük tablolardan oluşuyorsa (her tablonun başlığı KOD ile başlar),
+    // sayfayı o sütunlara böl. Tablolar farklı yüksekliklerde başlasa da doğru ayrılır.
+    var anchors = [];
+    rows.forEach(function (r, ri) {
+      var ks = r.cells.filter(function (c) { return /^(kod|code|kodu|urun kodu|stok kodu)$/.test(fold(c.text)); });
+      if (!ks.length) return;
+      var dr = null;
+      for (var q = ri + 1; q < rows.length && q <= ri + 3; q++) if (rows[q].cells.length >= 2 && rows[q].cells.some(function (c) { return isNum(c.text); })) { dr = rows[q]; break; }
+      if (!dr) return;
+      // KOD sütunu bir tablonun başıdır, eğer altındaki satırda solunda hiç hücre yoksa
+      // ya da solundaki hücreler başka bir tablonun satırıysa (içinde ürün kodu varsa).
+      // Solunda yalnızca ölçü değerleri varsa KOD aynı tablonun ortasındaki bir sütundur.
+      ks.forEach(function (k) {
+        var left = dr.cells.filter(function (c) { return c.x1 < k.x0 - 2 && hasDigit(c.text); });
+        var other = left.some(function (c) { return looksCode(c.text) && /[A-Za-z]/.test(c.text); }) && left.some(function (c) { return looksMoney(c.text); });
+        if (!left.length || other) anchors.push(k.x0);
+      });
+    });
+    anchors.sort(function (a, b) { return a - b; });
+    var strips = [];
+    anchors.forEach(function (x) { if (!strips.length || x - strips[strips.length - 1] > 25) strips.push(x); });
+    if (strips.length >= 2) {
+      // Kesme yeri: sütun başlığının hemen solundaki, yazıların en az kestiği boşluk
+      var cut = strips.slice(1).map(function (x) {
+        var best = x - 6, bc = Infinity, run = 0, runStart = 0, bestRun = -1;
+        for (var c = x - 40; c <= x - 2; c += 2) {
+          var cost = 0; items.forEach(function (i) { if (i.x < c && i.x + i.w > c) cost++; });
+          if (cost < bc) { bc = cost; run = 1; runStart = c; bestRun = 1; best = c; }
+          else if (cost === bc && c - 2 === runStart + (run - 1) * 2) { run++; if (run >= bestRun) { bestRun = run; best = runStart + (run - 1); } }
+          else if (cost === bc) { run = 1; runStart = c; }
+        }
+        return best;
+      }), bounds = [-Infinity].concat(cut, [Infinity]);
+      for (var sg = 0; sg < bounds.length - 1; sg++) parts.push(items.filter(function (i) { var m = i.x + i.w / 2; return m >= bounds[sg] && m < bounds[sg + 1]; }));
+      rest = [];
+    }
+    if (strips.length < 2) rows.forEach(function (r, hi) {
+      var xs = repeatSplits(r); if (!xs) return;
+      var below = rows[hi + 1];
+      if (!below || !isDataRow(below) || Math.abs(below.x0 - r.x0) > 0.12 * (below.x1 - below.x0)) return;
+      // Bölge: başlığın üstündeki ad satırlarından, altındaki son veri satırına kadar
+      var top = r.y + r.h, bot = r.y - r.h, steps = 0;
+      for (var u = hi - 1; u >= 0 && steps < 3; u--) { if (rows[u].y - r.y > 75 || isDataRow(rows[u]) || repeatSplits(rows[u])) break; top = rows[u].y + rows[u].h; steps++; }
+      for (var d = hi + 1; d < rows.length; d++) { if (!isDataRow(rows[d])) break; bot = rows[d].y - rows[d].h; }
+      var zone = rest.filter(function (i) { return i.y <= top && i.y >= bot; });
+      if (!zone.length) return;
+      rest = rest.filter(function (i) { return !(i.y <= top && i.y >= bot); });
+      var edges = [-Infinity].concat(xs, [Infinity]);
+      for (var g = 0; g < edges.length - 1; g++) parts.push(zone.filter(function (i) { var m = i.x + i.w / 2; return m >= edges[g] && m < edges[g + 1]; }));
+    });
+    parts.unshift(rest);
     var tables = [], loose = [];
     parts.forEach(function (p) {
       var r = tablesIn(buildRows(p), pageNo);
       tables = tables.concat(r.tables); loose = loose.concat(r.loose);
     });
     // Adı bulunamayan tablo: sayfadaki en büyük yazılı başlığı kullan
-    var bigs = loose.filter(function (r) { return r.text.length >= 4 && r.text.length <= 70 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3}/.test(r.text) && !isDataRow(r); })
+    var bigs = loose.filter(function (r) { return r.text.length >= 4 && r.text.length <= 70 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3}/.test(r.text) && !/www\.|@|https?:|e-?mail|web:/i.test(r.text) && !isDataRow(r); })
       .sort(function (a, b) { return b.h - a.h || b.y - a.y; });
     var guess = '';
     if (bigs.length) {

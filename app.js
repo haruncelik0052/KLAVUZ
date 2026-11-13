@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.2.0';
+  var APP_VERSION = '0.3.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -100,6 +100,9 @@
     });
   }
   function hydrateImages(root) {
+    (root || document).querySelectorAll('[data-kv]').forEach(function (el) {
+      kvGet(el.dataset.kv).then(function (url) { if (url && el.isConnected) el.innerHTML = '<img alt="" src="' + url + '">'; });
+    });
     (root || document).querySelectorAll('[data-img]').forEach(function (el) {
       var id = el.dataset.img;
       kvGet('item:' + id).then(function (url) {
@@ -110,7 +113,14 @@
 
   function offersOf(itemId) { return Object.values(db.offers).filter(function (o) { return o.itemId === itemId; }); }
   function buyOf(o) { return o.listPrice == null ? null : Math.round(o.listPrice * (1 - (o.supDisc || 0) / 100) * 100) / 100; }
-  function sizeNum(v) { var m = String(v || '').match(/\d[\d.]*(?:,\d+)?/); if (!m) return null; var n = parseFloat(m[0].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.')); return isNaN(n) ? null : n; }
+  // Ölçüyü sayıya çevir (sıralama için): 1 1/2" -> 1.5, 3/16" -> 0.1875, 1’1/4 -> 1.25, 10.000 LT -> 10000
+  function sizeNum(v) {
+    var t = String(v || '').trim(), m;
+    if ((m = t.match(/^(\d+)\s*[’'\s]\s*(\d+)\/(\d+)/))) return Number(m[1]) + Number(m[2]) / Number(m[3]);
+    if ((m = t.match(/^(\d+)\/(\d+)/))) return Number(m[1]) / Number(m[2]);
+    m = t.match(/\d[\d.]*(?:,\d+)?/); if (!m) return null;
+    var n = parseFloat(m[0].replace(/\.(?=\d{3}(\D|$))/g, '').replace(',', '.')); return isNaN(n) ? null : n;
+  }
   function sizeSort(a, b) {
     var x = sizeNum(a.size), y = sizeNum(b.size);
     if (x != null && y != null && x !== y) return x - y;
@@ -236,7 +246,7 @@
       }
       return { cert: true, pages: shots, rows: [], images: [], textLength: textLength, pageCount: n, tableCount: 0 };
     }
-    var rows = [], images = [], tableCount = 0, emptyPages = 0;
+    var rows = [], images = [], tableCount = 0, emptyPages = 0, infoTables = [];
     for (p = 1; p <= n; p++) {
       var page = pages[p - 1].page, view = page.view, area = (view[2] - view[0]) * (view[3] - view[1]);
       var ops = await page.getOperatorList(), boxes = [], ctm = [1, 0, 0, 1, 0, 0], stack = [], seen = {};
@@ -253,7 +263,7 @@
         }
       }
       if (pages[p - 1].items.length < 5) emptyPages++;
-      var res = Okuyucu.parsePage(pages[p - 1].items, boxes, p), urls = {};
+      var res = Okuyucu.parsePage(pages[p - 1].items, boxes, p), urls = {}, inks = {}, usedPick = {};
       if (boxes.length) {
         // Önce resmin kendisini al (üstüne yazı binmez); alınamazsa sayfa görüntüsünden kırp
         var cv = null, vp = null;
@@ -274,22 +284,32 @@
             t.getContext('2d').drawImage(cv, sx, sy, sw, sh, 0, 0, t.width, t.height);
             url = thumbUrl(t);
           }
-          if (url) { urls[b.id] = url; images.push({ page: p, url: url }); }
+          if (url) { urls[b.id] = url; inks[b.id] = thumbUrl.ink || 0; images.push({ page: p, url: url }); }
         }
       }
       res.tables.forEach(function (t) {
+        // Kodu da fiyatı da olmayan tablo ürün değil, bilgi tablosudur (malzeme özellikleri, basınç çizelgesi vb.)
+        if (!t.hasCode && !t.hasPrice) { infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
         tableCount++;
+        // Resim: adaylar içinde fotoğrafı teknik çizime tercih et (çizim çoğunlukla beyazdır)
+        var pick = null;
+        (t.imgs || []).forEach(function (id) { if (urls[id] && (pick == null || inks[id] > inks[pick] * 1.3)) pick = id; });
+        if (pick != null) usedPick[pick] = true;
         t.rows.forEach(function (r) {
           var warn = null;
           if (!t.name) warn = 'ürün adı bulunamadı';
-          else if (t.guess) warn = 'ürün adını kontrol edin';
-          else if (t.hasCode && !r.code) warn = 'kod yok';
-          rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '', size: r.size, price: r.price, cur: r.cur,
-            priceVat: r.priceVat, specs: r.specs, img: t.img != null ? urls[t.img] : null, page: p, warn: warn });
+          else if (t.guess) warn = 'ürün adı tahmin edildi';
+          else if (t.hasCode && !r.code) warn = 'kod okunamadı';
+          else if (t.hasPrice && r.price == null) warn = 'fiyat okunamadı';
+          else if (!r.size && !r.code) warn = 'ölçü okunamadı';
+          rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '',
+            size: (r.size + (r.variant ? ' · ' + r.variant : '')).trim(), price: r.price, cur: r.cur,
+            priceVat: r.priceVat, specs: r.specs, img: pick != null ? urls[pick] : null, page: p, warn: warn });
         });
       });
       // Tablo dışında kalan, kodu ve fiyatı aynı satırda olan ürünler
       var lineRows = [], usedImg = {};
+      Object.keys(usedPick).forEach(function (id) { usedImg[id] = true; });
       res.tables.forEach(function (t) { if (t.img != null) usedImg[t.img] = true; });
       res.loose.forEach(function (l) {
         var r = parseLine(l.text);
@@ -308,7 +328,7 @@
       });
       if (prog) prog(p, n, 'tablolar');
     }
-    return { rows: rows, images: images, textLength: textLength, pageCount: n, tableCount: tableCount, emptyPages: emptyPages };
+    return { rows: rows, images: images, textLength: textLength, pageCount: n, tableCount: tableCount, emptyPages: emptyPages, infoTables: infoTables };
   }
   // PDF içindeki resim nesnesini al
   function imgObject(page, name) {
@@ -345,6 +365,7 @@
       }
       if (x1 < 0 || dark < w * h * 0.01) return null; // boş ya da neredeyse boş resim
       var bw = x1 - x0 + 1, bh = y1 - y0 + 1;
+      thumbUrl.ink = dark / (bw * bh); // doluluk: fotoğrafta yüksek, teknik çizimde düşük
       if (bw >= 20 && bh >= 20 && bw * bh < 0.85 * w * h) {
         var pad = 4, cx = Math.max(0, x0 - pad), cy = Math.max(0, y0 - pad), cw = Math.min(w - cx, bw + 2 * pad), ch = Math.min(h - cy, bh + 2 * pad);
         var c2 = document.createElement('canvas'); c2.width = cw; c2.height = ch;
@@ -385,6 +406,56 @@
     });
     return rows;
   }
+  // Okuma raporu: belge nasıl okundu, hangi uyarı kaç kez ve nerede çıktı. Paylaşılabilir metne çevrilir.
+  function buildReport(name, supplier, kind, res, rows) {
+    var prod = {}, prodImg = {}, warns = {}, samples = [], noPrice = 0, noCode = 0;
+    rows.forEach(function (r) {
+      var k = r.name + '|' + (r.sub || ''); prod[k] = true; if (r.img) prodImg[k] = true;
+      if (r.price == null) noPrice++;
+      if (!r.code) noCode++;
+      if (r.warn) {
+        warns[r.warn] = (warns[r.warn] || 0) + 1;
+        if (samples.filter(function (s) { return s.why === r.warn; }).length < 4) samples.push({ p: r.page || 0, name: String(r.name).slice(0, 50), code: r.code || '', size: r.size || '', why: r.warn });
+      }
+    });
+    return { ver: APP_VERSION, file: name, supplier: supplier, kind: kind, date: today(), pages: res.pageCount || 0, emptyPages: res.emptyPages || 0,
+      tables: res.tableCount || 0, products: Object.keys(prod).length, withImg: Object.keys(prodImg).length, rows: rows.length,
+      noPrice: noPrice, noCode: noCode, info: (res.infoTables || []).slice(0, 12), infoCount: (res.infoTables || []).length, warns: warns, samples: samples };
+  }
+  function reportText(rp) {
+    if (!rp) return 'Bu belge için okuma raporu yok (eski sürümde yüklenmiş).';
+    var out = ['Klavuz ' + rp.ver + ' · Okuma raporu · ' + rp.date, 'Belge: ' + rp.file, 'Tedarikçi: ' + rp.supplier + ' · Tür: ' + (KINDS[rp.kind] || rp.kind), '',
+      'Sayfa: ' + rp.pages + (rp.emptyPages ? ' (' + rp.emptyPages + ' sayfada yazı yok)' : ''),
+      'Ürün tablosu: ' + rp.tables + ' · Ürün: ' + rp.products + ' · Satır: ' + rp.rows,
+      'Resim bulunan ürün: ' + rp.withImg + ' / ' + rp.products,
+      'Fiyatsız satır: ' + rp.noPrice + ' · Kodsuz satır: ' + rp.noCode];
+    if (rp.infoCount) {
+      out.push('', 'Ürün sayılmayan bilgi tablosu: ' + rp.infoCount);
+      rp.info.forEach(function (t) { out.push('  s' + t.page + ' · ' + t.name + ' (' + t.rows + ' satır)'); });
+    }
+    var keys = Object.keys(rp.warns);
+    out.push('', keys.length ? 'Uyarılar:' : 'Uyarı yok.');
+    keys.sort(function (a, b) { return rp.warns[b] - rp.warns[a]; }).forEach(function (k) {
+      out.push('- ' + k + ': ' + rp.warns[k] + ' satır');
+      rp.samples.filter(function (s) { return s.why === k; }).forEach(function (s) {
+        out.push('    s' + s.p + ' · ' + s.name + (s.code ? ' · ' + s.code : '') + (s.size ? ' · ' + s.size : ''));
+      });
+    });
+    return out.join('\n');
+  }
+  function reportHtml(rp) {
+    if (!rp) return '<div class="muted">Bu belge için okuma raporu yok (eski sürümde yüklenmiş).</div>';
+    var keys = Object.keys(rp.warns).sort(function (a, b) { return rp.warns[b] - rp.warns[a]; });
+    return '<div class="kv"><span>Sayfa</span><b>' + rp.pages + (rp.emptyPages ? ' · ' + rp.emptyPages + ' yazısız' : '') + '</b></div>' +
+      '<div class="kv"><span>Ürün / satır</span><b>' + rp.products + ' ürün · ' + rp.rows + ' satır</b></div>' +
+      '<div class="kv"><span>Resim bulunan ürün</span><b>' + rp.withImg + ' / ' + rp.products + '</b></div>' +
+      '<div class="kv"><span>Fiyatsız / kodsuz satır</span><b>' + rp.noPrice + ' / ' + rp.noCode + '</b></div>' +
+      (rp.infoCount ? '<div class="kv"><span>Ürün sayılmayan bilgi tablosu</span><b>' + rp.infoCount + '</b></div>' : '') +
+      (keys.length ? '<div><b>Uyarı nedenleri</b></div>' + keys.map(function (k) {
+        return '<div class="why"><span class="badge b-warn">' + rp.warns[k] + ' satır</span> ' + esc(k) +
+          '<div class="muted">' + rp.samples.filter(function (s) { return s.why === k; }).map(function (s) { return 's' + s.p + ' · ' + esc(s.name) + (s.code ? ' · ' + esc(s.code) : ''); }).join('<br>') + '</div></div>';
+      }).join('') : '<div class="badge b-ok">Uyarı yok</div>');
+  }
   // Belgeyi veritabanına işle
   // - Aynı tedarikçi + aynı kod: teklifi günceller, fiyat değiştiyse geçmişe yazar
   // - Aynı tedarikçi + aynı ürün adı: aynı ürün kartına yeni varyant (ölçü/kod) olarak ekler
@@ -416,7 +487,7 @@
         if (r.size) off.size = r.size;
         if (r.specs) off.specs = r.specs;
         if (r.priceVat != null) off.priceVat = r.priceVat;
-        off.status = r.warn ? 'check' : 'ok';
+        off.status = r.warn ? 'check' : 'ok'; off.why = r.warn || '';
         off.updated = today(); off.docId = docId; res.updated++;
         if (r.img) attachImg(db.items[off.itemId], r.img);
         return;
@@ -429,12 +500,12 @@
       if (r.img) attachImg(item, r.img);
       var o = { id: uid(), itemId: item.id, supplier: supplier, code: r.code || '', key: key, size: r.size || '', specs: r.specs || '',
         listPrice: r.price, priceVat: r.priceVat == null ? null : r.priceVat, cur: r.cur || 'TL', supDisc: 0, sellPrice: r.price, lastDir: null,
-        status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), updated: today(), docId: docId };
+        status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), why: r.warn || '', updated: today(), docId: docId };
       db.offers[o.id] = o; res.created++;
       if (pendingFlag) res.pending++;
     });
     if (d.images && d.images.length) kvPut('doc:' + docId, d.images.map(function (im) { return { page: im.page, url: im.url }; }));
-    db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length });
+    db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length, report: d.report || null });
     save();
     return res;
   }
@@ -503,7 +574,7 @@
     var codeList = offs.map(function (o) { return o.code; }).filter(Boolean);
     var codes = codeList.slice(0, 3).join(', ') + (codeList.length > 3 ? ' +' + (codeList.length - 3) : '');
     var sup = Array.from(new Set(offs.map(function (o) { return o.supplier; }))).join(', ');
-    var sizeList = offs.map(function (o) { return o.size; }).filter(Boolean);
+    var sizeList = Array.from(new Set(offs.map(function (o) { return o.size; }).filter(Boolean)));
     var sizes = sizeList.slice(0, 6).join(' · ') + (sizeList.length > 6 ? ' +' + (sizeList.length - 6) : '');
     return '<div class="card pcard" data-item="' + it.id + '">' + thumb(it) +
       '<div class="ptxt"><b>' + esc(it.name) + '</b>' +
@@ -525,7 +596,7 @@
 
   // ---------- Ekranlar ----------
   var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, draft: null, catSupplier: '', catKind: 'katalog',
-    histOffer: null, edit: null, pick: false, pickList: [], docView: null, readNote: '', lastFile: null, open: {} };
+    histOffer: null, edit: null, pick: false, pickList: [], docView: null, repDoc: null, readNote: '', lastFile: null, open: {} };
   var FILTERS = [['hepsi', 'Tümü'], ['kontrol', 'Kontrol gerekli'], ['dogrulanmamis', 'Doğrulanmamış'], ['resimsiz', 'Resimsiz'], ['bekliyor', 'Bekleyen']];
 
   function viewSearch() {
@@ -537,7 +608,7 @@
   }
   function statusBadge(o) {
     var s = '';
-    if (o.status === 'check') s += '<span class="badge b-warn">Kontrol gerekli</span>';
+    if (o.status === 'check') s += '<span class="badge b-warn">Kontrol gerekli' + (o.why ? ': ' + esc(o.why) : '') + '</span>';
     if (o.status === 'pending') s += '<span class="badge b-pend">Ana katalogda yok, bekliyor</span>';
     if (o.lastDir === 'up') s += '<span class="badge b-warn">Fiyat yükseldi</span>';
     if (o.lastDir === 'down') s += '<span class="badge b-ok">Fiyat düştü</span>';
@@ -584,9 +655,11 @@
     if (!offs.length) return '<div class="card"><p class="muted">Bu üründe teklif yok.</p></div>';
     var sel = offs.filter(function (o) { return o.id === st.variant; })[0] || offs[0];
     st.variant = sel.id;
+    var sizeCount = {}; offs.forEach(function (o) { sizeCount[o.size] = (sizeCount[o.size] || 0) + 1; });
     var variants = offs.length > 1 ? '<div class="variants">' + offs.map(function (o) {
       return '<button class="chip' + (o.id === sel.id ? ' on' : '') + '" data-act="variant" data-id="' + o.id + '">' +
-        esc(o.size || o.code || '—') + (o.sellPrice != null ? '<small>' + fmtC(o.sellPrice, o.cur) + '</small>' : '') + '</button>';
+        esc(o.size || o.code || '—') + (o.sellPrice != null ? '<small>' + fmtC(o.sellPrice, o.cur) + '</small>' : '') +
+        (o.size && sizeCount[o.size] > 1 && o.code ? '<small>' + esc(o.code) + '</small>' : '') + '</button>';
     }).join('') + '</div>' : '';
     var webQ = encodeURIComponent((it.brand + ' ' + (sel.code || it.name)).trim());
     var noImg = !it.hasImg ? '<div class="card noimg"><b>Resim yok</b>' +
@@ -642,8 +715,9 @@
     var docs = db.docs.slice().reverse().map(function (d) {
       var isCert = d.kind === 'sertifika';
       return '<div class="row"><span><b>' + esc(d.name) + '</b><div class="muted">' + esc(d.supplier) + ' · ' + esc(d.date) + ' · ' + d.count + (isCert ? ' sayfa' : ' satır') + ' · ' + (KINDS[d.kind] || 'ana katalog') + '</div></span>' +
-        '<span>' + (isCert ? '<button class="link" data-act="opendoc" data-id="' + d.id + '">Aç</button>' : '') +
-        '<button class="link danger-text" data-act="deldoc" data-id="' + d.id + '">Sil</button></span></div>';
+        '<span>' + (isCert ? '<button class="link" data-act="opendoc" data-id="' + d.id + '">Aç</button>' : '<button class="link" data-act="rep" data-id="' + d.id + '">Rapor</button>') +
+        '<button class="link danger-text" data-act="deldoc" data-id="' + d.id + '">Sil</button></span></div>' +
+        (st.repDoc === d.id ? '<div class="report">' + reportHtml(d.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="' + d.id + '">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="' + d.id + '">Kopyala</button></div></div>' : '');
     }).join('');
     var h = '<div class="card"><h2>Belge yükle</h2>' +
       '<div class="muted">PDF, Excel (xlsx/xls), CSV veya TXT dosyası seçin. Okunan ürünleri kaydetmeden önce kontrol edersiniz. İnternet gerekmez.</div>' +
@@ -667,6 +741,7 @@
       h += '<div class="card"><h3>Kontrol: ' + esc(d.name) + '</h3>' +
         '<div class="muted">' + Object.keys(prod).length + ' ürün, ' + d.rows.length + ' satır okundu. ' + Object.keys(prodImg).length + ' ürüne resim bulundu, ' + warn + ' satır kontrol gerektiriyor.</div>' +
         (d.note ? '<div class="internal">' + esc(d.note) + '</div>' : '') +
+        '<div class="report">' + reportHtml(d.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="draft">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="draft">Kopyala</button></div></div>' +
         '<div class="scroll"><table><tr><th></th><th>Ürün</th><th>Kod</th><th>Ölçü</th><th>Fiyat</th><th>Not</th></tr>' +
         d.rows.slice(0, 300).map(function (r) {
           return '<tr><td>' + (r.img ? '<img class="mini" alt="" src="' + r.img + '">' : '') + '</td><td>' + esc(r.name) + (r.sub ? '<div class="muted">' + esc(r.sub) + '</div>' : '') + '</td><td>' + esc(r.code || '—') + '</td><td>' + esc(r.size) + '</td><td>' + fmtC(r.price, r.cur) + '</td><td>' + (r.warn ? '<span class="badge b-warn">' + esc(r.warn) + '</span>' : '') + '</td></tr>';
@@ -718,6 +793,7 @@
     var s = db.settings, out = [];
     if (s.company) out.push(s.company);
     if (s.phone) out.push('Tel: ' + s.phone);
+    if (s.web || s.email) out.push([s.web, s.email].filter(Boolean).join(' · '));
     out.push('Tarih: ' + today(), '');
     cust.forEach(function (c, i) {
       out.push((i + 1) + '. ' + c.name + (c.code ? ' (' + c.code + ')' : '') + (c.size ? ' ' + c.size : '') + ' — ' + c.qty + ' adet — ' + fmtC(c.amount, c.cur));
@@ -725,6 +801,14 @@
     if (cd) out.push('', 'İskonto: %' + cd);
     totals.forEach(function (t) { out.push('Toplam (KDV hariç, ' + t.c + '): ' + fmtC(t.net, t.c)); });
     if (s.note) out.push('', s.note);
+    if (s.warranty) out.push(s.warranty);
+    if (s.bankOnOffer) {
+      var curs = totals.map(function (t) { return t.c; }), ib = [];
+      if (curs.indexOf('TL') >= 0 && s.ibanTL) ib.push('IBAN (TL): ' + s.ibanTL);
+      if (curs.indexOf('EUR') >= 0 && s.ibanEUR) ib.push('IBAN (EUR): ' + s.ibanEUR);
+      if (curs.indexOf('USD') >= 0 && s.ibanUSD) ib.push('IBAN (USD): ' + s.ibanUSD);
+      if (ib.length) out.push('', s.bank || '', ib.join('\n'));
+    }
     return out.join('\n');
   }
   // Uyarılar: yalnızca ayarlarda açık olan türler gösterilir
@@ -739,7 +823,7 @@
       if (o.lastDir === 'down') out.push({ k: 'down', d: name + ' — ' + fmtC(o.listPrice, o.cur), oid: o.id });
       if (o.sellPrice != null && b != null && o.sellPrice < b) out.push({ k: 'below', d: name + ' — satış ' + fmtC(o.sellPrice, o.cur) + ', alış ' + fmtC(b, o.cur) });
       if (o.status === 'pending') out.push({ k: 'pending', d: name, itemId: o.itemId });
-      if (o.status === 'check') out.push({ k: 'check', d: name, itemId: o.itemId });
+      if (o.status === 'check') out.push({ k: 'check', d: name + (o.why ? ' — ' + o.why : ''), itemId: o.itemId });
     });
     return out;
   }
@@ -756,7 +840,12 @@
     var head = '<div class="card"><div class="row"><b>Kontrol bekleyen ürün: ' + checkCount + '</b>' +
       '<button class="primary" data-act="nextcheck" data-id="">Kontrole başla</button></div></div>';
     if (!a.length) return head + '<div class="card"><p class="muted">Seçili bildirim türlerinde uyarı yok. Türleri Ayarlar\'dan açıp kapatabilirsiniz.</p></div>';
-    return head + a.map(function (x) {
+    var byWhy = {}; Object.values(db.offers).forEach(function (o) { if (o.status === 'check') { var w = o.why || 'neden kaydedilmemiş (eski sürüm)'; byWhy[w] = (byWhy[w] || 0) + 1; } });
+    var whyKeys = Object.keys(byWhy).sort(function (x, y) { return byWhy[y] - byWhy[x]; });
+    if (whyKeys.length) head += '<div class="card"><h3>Kontrol nedenleri</h3>' + whyKeys.map(function (w) { return '<div class="why"><span class="badge b-warn">' + byWhy[w] + '</span> ' + esc(w) + '</div>'; }).join('') +
+      '<div class="muted">Ayrıntı ve örnekler için Belge sekmesinde belgenin yanındaki "Rapor" düğmesine basın.</div></div>';
+    if (a.length > 150) head += '<div class="card"><div class="muted">' + a.length + ' uyarıdan ilk 150 tanesi gösteriliyor.</div></div>';
+    return head + a.slice(0, 150).map(function (x) {
       var label = ALERT_KEYS.filter(function (k) { return k[0] === x.k; })[0][1];
       return '<div class="card"><b>' + esc(label) + '</b><div class="muted">' + esc(x.d) + '</div>' +
         (x.oid ? '<div><button class="ghost" data-act="ack" data-id="' + x.oid + '">Gördüm</button></div>' : '') +
@@ -765,26 +854,32 @@
   }
   // ---- Deneyim ve öneri / Sürüm testi ----
   var FB_SECS = [['ara', 'Arama'], ['urun', 'Ürün sayfası'], ['belge', 'Belge okuma'], ['sepet', 'Sepet ve teklif'], ['uyari', 'Uyarılar'], ['genel', 'Genel']];
+  // Sürüm testi: markaya değil sistemin kendisine yönelik maddeler. Hangi belgeyle denendiği not kutusuna yazılır.
   var VTEST = [
     ['Kurulum', [
-      ['k1', 'Uygulama açıldı; uçak modunda da açılıyor'],
-      ['k2', 'İnternet kapalıyken PDF belgesi okunuyor']]],
+      ['k1', 'Yeni sürüm eskisinin üstüne kuruldu; ürünlerim ve ayarlarım duruyor'],
+      ['k2', 'Uygulama uçak modunda açılıyor ve belge okuyor']]],
     ['Belge okuma', [
-      ['b1', 'Elif Depo fiyat listesi: "Yatay" ve "Dikey" iki ürün olarak geldi, litre ölçüleri doğru'],
-      ['b2', 'Elif Depo fiyatları (KDV hariç) listeyle aynı'],
-      ['b3', 'Vana kataloğu: ürün adları ve DN ölçüleri doğru'],
-      ['b4', 'Vana kataloğu: resimler doğru ürüne bağlandı'],
-      ['b5', 'Anatolia: HCT kodları, ölçüler ve hortum resmi geldi'],
-      ['b6', 'Polyhose sertifikası belge olarak saklandı ve Belgeler\'den açılıyor']]],
-    ['Kalıcılık', [
+      ['b1', 'Yüklediğim belgede ürün adları doğru geldi'],
+      ['b2', 'Kodlar ve ölçüler doğru geldi'],
+      ['b3', 'Fiyatlar ve para birimi doğru geldi'],
+      ['b4', 'Resimler doğru ürüne bağlandı'],
+      ['b5', 'Sertifika / onay belgesi ürün olarak okunmadı, belge olarak açılıyor'],
+      ['b6', 'Okunamayan belgede uygulama nedenini açıkça söyledi']]],
+    ['Okuma raporu', [
+      ['o1', 'Belgeyi okuyunca uyarı nedenleri ve sayıları göründü'],
+      ['o2', 'Okuma raporunu paylaşabildim ya da kopyalayabildim'],
+      ['o3', 'Ürün sayfasında "Kontrol gerekli" uyarısının nedeni yazıyor']]],
+    ['Kalıcılık ve yedek', [
       ['r1', 'Uygulamayı tamamen kapatıp açınca ürünler ve resimler duruyor'],
-      ['r2', 'Yedek indirildi; yedekten yükleyince resimler de geri geldi']]],
+      ['r2', 'Yedek indirildi; yedekten yükleyince resimler de geri geldi'],
+      ['r3', 'Ada firma profili yüklendi, firma bilgileri doldu']]],
     ['Arayüz', [
-      ['a1', 'Alt bar: seçili sekme yukarı kalkıp kendi ışığını yakıyor'],
-      ['a2', 'Alt bar ürün sayfasında ve belge sayfasında da görünüyor']]],
+      ['a1', 'Alt bar seçili sekmeyi yukarı kaldırıp ışığını yakıyor ve her sayfada görünüyor'],
+      ['a2', 'Çok ürün varken arama ve sayfalar takılmadan çalışıyor']]],
     ['Paylaşım', [
       ['p1', 'Deneyim ve öneri metni WhatsApp ile gönderildi'],
-      ['p2', '"Web\'de görsel ara" tarayıcıda açıldı, uygulamaya geri dönülebildi']]]
+      ['p2', 'Dış bağlantılar tarayıcıda açıldı, uygulamaya geri dönülebildi']]]
   ];
   function vt() {
     if (!db.vtest || db.vtest.ver !== APP_VERSION) db.vtest = { ver: APP_VERSION, marks: {}, notes: {}, gnotes: {} };
@@ -873,9 +968,21 @@
       ALERT_KEYS.map(function (k) {
         return '<label class="chk"><input type="checkbox" data-notify="' + k[0] + '"' + (s.notify[k[0]] !== false ? ' checked' : '') + '> ' + k[1] + '</label>';
       }).join('');
-    var firm = '<label>Firma adı <input data-set="company" value="' + esc(s.company) + '"></label>' +
+    var firm = '<div class="muted">Ada uygulamasındaki firma profil dosyanızı (JSON) yükleyin; alanlar kendiliğinden dolar. Bilgiler müşteri çıktısında kullanılır.</div>' +
+      '<div class="row"><button class="primary" data-act="adaprofil">Ada profilini yükle</button><input type="file" id="profFile" accept=".json,application/json" style="display:none"></div>' +
+      (s.hasLogo ? '<div class="thumb logo" data-kv="logo"></div>' : '') +
+      '<label>Firma adı <input data-set="company" value="' + esc(s.company) + '"></label>' +
       '<label>Telefon <input data-set="phone" value="' + esc(s.phone) + '"></label>' +
-      '<label>Teklif notu <input data-set="note" value="' + esc(s.note) + '"></label>';
+      '<label>Web <input data-set="web" value="' + esc(s.web || '') + '"></label>' +
+      '<label>E-posta <input data-set="email" value="' + esc(s.email || '') + '"></label>' +
+      '<label>Adres <input data-set="address" value="' + esc(s.address || '') + '"></label>' +
+      '<label>Banka <input data-set="bank" value="' + esc(s.bank || '') + '"></label>' +
+      '<label>IBAN (TL) <input data-set="ibanTL" value="' + esc(s.ibanTL || '') + '"></label>' +
+      '<label>IBAN (EUR) <input data-set="ibanEUR" value="' + esc(s.ibanEUR || '') + '"></label>' +
+      '<label>IBAN (USD) <input data-set="ibanUSD" value="' + esc(s.ibanUSD || '') + '"></label>' +
+      '<label>Garanti metni <input data-set="warranty" value="' + esc(s.warranty || '') + '"></label>' +
+      '<label>Teklif notu <input data-set="note" value="' + esc(s.note) + '"></label>' +
+      '<label class="chk"><input type="checkbox" data-setb="bankOnOffer"' + (s.bankOnOffer ? ' checked' : '') + '> Banka bilgilerini müşteri çıktısına ekle</label>';
     var backup = '<div class="muted">Veriler bu cihazda saklanır. Düzenli yedek alın. Yedek, ürün resimlerini ve saklanan belgeleri de içerir.</div>' +
       '<div class="row"><button data-act="export">Yedek indir</button>' +
       '<label class="chk">Yedekten yükle <input type="file" id="importFile" accept=".json,application/json"></label></div>' +
@@ -963,7 +1070,8 @@
           (res.images && res.images.length ? 'Tablo bulunamadı. Bu belgede tablolar resim olarak duruyor olabilir; bu tür belgeler henüz okunamıyor.' : 'Belgede ürün tablosu bulunamadı.');
       } else {
         var note = res.emptyPages ? res.emptyPages + ' sayfada yazı yok (taranmış resim); o sayfalar okunamadı.' : '';
-        st.draft = { rows: prepDraft(res.rows), images: res.images, supplier: supplier, kind: kind, name: f.name, docId: uid(), note: note };
+        var dr = prepDraft(res.rows);
+        st.draft = { rows: dr, images: res.images, supplier: supplier, kind: kind, name: f.name, docId: uid(), note: note, report: buildReport(f.name, supplier, kind, res, dr) };
       }
     } catch (err) { st.draft = null; st.readNote = 'Okunamadı: ' + err.message; }
     render();
@@ -1007,6 +1115,26 @@
     } catch (err) { toast('Yedek dosyası okunamadı.'); }
   }
   function copyText() { copyStr($('#cust').textContent); }
+  function repOf(id) {
+    if (id === 'draft') return st.draft && st.draft.report;
+    var d = db.docs.find(function (x) { return x.id === id; }); return d && d.report;
+  }
+  // Ada uygulamasından alınan firma profil dosyası (JSON): firma bilgileri tek seferde doldurulur
+  function importProfile(txt) {
+    try {
+      var p = JSON.parse(txt);
+      if (!p || (!p.firma_ad && !p.firma_telefon)) return toast('Bu dosya firma profili değil.');
+      var s = db.settings;
+      s.company = p.firma_ad || s.company; s.phone = p.firma_telefon || s.phone;
+      s.web = p.firma_web || s.web || ''; s.email = p.firma_eposta || s.email || ''; s.address = p.firma_adres || s.address || '';
+      s.slogan = p.firma_slogan || s.slogan || ''; s.taxOffice = p.vergi_daire || s.taxOffice || ''; s.taxNo = p.vergi_no || s.taxNo || '';
+      s.bank = [p.banka_ad, p.banka_sube, p.banka_sahip].filter(Boolean).join(' · ') || s.bank || '';
+      s.ibanTL = p.iban_tl || s.ibanTL || ''; s.ibanEUR = p.iban_eur || s.ibanEUR || ''; s.ibanUSD = p.iban_usd || s.ibanUSD || '';
+      if (p.garanti_metni && p.garanti_metni.tr) s.warranty = p.garanti_metni.tr;
+      if (p.logo_jpeg) { kvPut('logo', 'data:image/jpeg;base64,' + p.logo_jpeg); s.hasLogo = true; }
+      save(); toast('Firma profili yüklendi'); render(true);
+    } catch (e) { toast('Profil dosyası okunamadı.'); }
+  }
 
   document.addEventListener('click', function (e) {
     var el = e.target.closest('[data-act],[data-tab],[data-item]');
@@ -1058,6 +1186,10 @@
       case 'print': window.print(); break;
       case 'copy': copyText(); break;
       case 'toggle': st.open[id] = !st.open[id]; render(true); break;
+      case 'rep': st.repDoc = st.repDoc === id ? null : id; render(true); break;
+      case 'repshare': shareText(reportText(repOf(id))); break;
+      case 'repcopy': copyStr(reportText(repOf(id))); break;
+      case 'adaprofil': { var pf = $('#profFile'); if (pf) pf.click(); break; }
       case 'fbshare': shareText(fbText()); break;
       case 'fbcopy': copyStr(fbText()); break;
       case 'vtshare': shareText(vtText()); break;
@@ -1090,8 +1222,10 @@
     else if (d.ldisc) { var l2 = db.cart.find(function (x) { return x.offerId === d.ldisc; }); if (l2) l2.disc = num(t.value); save(); render(); }
     else if (t.id === 'cartDisc') { db.cartDiscount = num(t.value); save(); render(); }
     else if (d.set) { db.settings[d.set] = t.value; save(); }
+    else if (d.setb) { db.settings[d.setb] = t.checked; save(); }
     else if (d.notify) { db.settings.notify[d.notify] = t.checked; save(); render(); }
     else if (t.id === 'importFile' && t.files[0]) { t.files[0].text().then(importData); }
+    else if (t.id === 'profFile' && t.files[0]) { t.files[0].text().then(importProfile); }
   });
 
   window.KlavuzSaved = function (ok) { toast(ok ? 'Yedek kaydedildi' : 'Yedek kaydedilemedi'); };

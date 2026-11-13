@@ -34,6 +34,36 @@ ok(t[0].rows[0].code === '750121DNV' && t[0].rows[0].size === 'DN15', 'kod ve DN
 ok(/Holes x Dia 4 x 12/.test(t[0].rows[0].specs), 'iki parçalı sütun birleştirildi');
 ok(new Set(t.map((x) => x.img)).size === 8 && t.every((x) => x.img != null), 'her tabloya ayrı bir resim bağlandı');
 
+console.log('Sayfa başlığı ürün adı olan katalog (iki dilli başlık, € fiyat)');
+t = tables('rakor-tek-tablo.json');
+ok(t.length === 1 && t[0].rows.length === 13, 'tek tablo, 13 satır');
+ok(t[0].name === 'PASLANMAZ R1-ST/R2-SN HORTUM SOKETLERİ' && t[0].sub === 'STAINLESS R1-ST/R2-SN HOSE FERRULES', 'ad Türkçe başlık, alt başlık İngilizce');
+ok(t[0].rows[0].code === 'BPHS105' && t[0].rows[0].size === '3/16"', 'kod ve ölçü doğru');
+ok(t[0].rows[0].price === 1 && t[0].rows[0].cur === 'EUR', 'fiyat ve para birimi (EUR) doğru');
+ok(t[0].rows.every((r) => /SERİ SERIE BPHS1/.test(r.specs)), 'birleşik hücredeki seri bütün satırlara yayıldı');
+ok(!/www\./.test(t[0].name), 'sayfa altındaki web adresi ürün adı olmadı');
+
+console.log('Çift fiyatlı tablo (TAKIM ve GÖVDE)');
+t = tables('rakor-cift-fiyat.json');
+ok(t.length === 1 && t[0].rows.length === 40, 'tek tablo, 20 satır x 2 teklif = 40');
+ok(t[0].rows[0].code === 'BPNM10606' && t[0].rows[0].variant === 'TAKIM' && t[0].rows[1].code === 'BPNMG10606' && t[0].rows[1].variant === 'GÖVDE', 'takım ve gövde ayrı teklif');
+ok(t[0].rows[0].price != null && t[0].rows[1].price != null, 'iki teklifin de fiyatı var');
+ok(t[0].rows[0].size === '6 L' && t[0].rows[39].size === '38 S', 'birleşik hücredeki tip (L / S) ölçüye eklendi');
+
+console.log('Üç tablo yan yana');
+t = tables('uc-tablo-yan-yana.json');
+ok(t.length === 6, 'altı tablo bulundu');
+ok(t.map((x) => x.name).join('|') === ['MANŞON', 'KONİK REKOR', 'NİPEL', 'KÖR TAPA', 'DİRSEK 90°', 'KUYRUKLU DİRSEK'].join('|'), 'her tablonun adı kendi başlığından: ' + t.map((x) => x.name).join(', '));
+ok(t[0].rows[0].code === 'AS11701' && t[0].rows[0].size === '1/8' && t[0].rows[0].price != null, 'kod, ölçü, fiyat doğru');
+ok(t.every((x) => x.columns.length === 3), 'komşu tablonun sütunları karışmadı');
+
+console.log('Farklı yükseklikte başlayan sütunlu tablolar');
+t = tables('sutunlu-sayfa.json');
+ok(t.length === 4, 'dört tablo bulundu');
+ok(t.some((x) => x.name === 'REDÜKSİYON' && x.rows.length === 42), 'soldaki uzun tablo tek başına: 42 satır');
+ok(t.some((x) => x.name === 'HORTUM REKORU AĞIR TİP' && x.rows[0].code === 'AS10101'), 'ortadaki tablo kendi adıyla');
+ok(t.every((x) => x.columns.length === 3), 'komşu tablonun sütunları karışmadı');
+
 console.log('Sertifika tanıma');
 const c = load('sertifika.json');
 ok(O.looksLikeCertificate(c.text, c.pageCount) === true, 'sertifika belgesi tanındı');
