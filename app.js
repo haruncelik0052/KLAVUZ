@@ -696,7 +696,7 @@
           '</span><button class="ghost" data-act="merge" data-id="' + x.id + '">Aynı ürün, birleştir</button></div>';
       }).join('') + '</div>' : '');
   }
-  var KINDS = { katalog: 'ana katalog', fiyat: 'fiyat listesi', sertifika: 'sertifika / belge' };
+  var KINDS = { katalog: 'ana katalog', fiyat: 'fiyat listesi', sertifika: 'belge (sertifika, tanıtım)' };
   function viewDocPages(id) {
     var d = db.docs.find(function (x) { return x.id === id; });
     return '<button class="link" data-act="closedoc">← Belgelere dön</button>' +
@@ -725,16 +725,16 @@
       '<label>Belge türü <select id="kind">' +
       '<option value="katalog"' + (st.catKind === 'katalog' ? ' selected' : '') + '>Ana katalog (resimli, detaylı)</option>' +
       '<option value="fiyat"' + (st.catKind === 'fiyat' ? ' selected' : '') + '>Fiyat listesi (kod ve fiyat)</option>' +
-      '<option value="sertifika"' + (st.catKind === 'sertifika' ? ' selected' : '') + '>Sertifika / onay belgesi (ürün okunmaz)</option></select></label>' +
+      '<option value="sertifika"' + (st.catKind === 'sertifika' ? ' selected' : '') + '>Belge: sertifika, tanıtım dosyası (ürün okunmaz)</option></select></label>' +
       '<input type="file" id="docFile" accept=".pdf,.xlsx,.xls,.csv,.txt">' +
       '<div class="row"><button class="primary" data-act="read">Belgeyi oku</button><span class="muted" id="readMsg">' + esc(st.readNote || '') + '</span></div></div>';
     if (st.draft && st.draft.cert) {
       var c = st.draft;
       h += '<div class="card"><h3>Kontrol: ' + esc(c.name) + '</h3>' +
-        '<div class="internal">Bu belge sertifika / onay yazısı olarak tanındı. Ürün okunmadı; ' + c.pages.length + ' sayfa belge olarak saklanacak ve Belgeler listesinden açılabilecek.</div>' +
+        '<div class="internal">' + (c.reason ? esc(c.reason) + ' İsterseniz ' : 'Bu belge sertifika / onay yazısı olarak tanındı. Ürün okunmadı; ') + c.pages.length + ' sayfa belge olarak saklanacak ve Belgeler listesinden açılabilecek.</div>' +
         (c.pages[0] ? '<img class="certprev" alt="" src="' + c.pages[0] + '">' : '') +
         '<div class="row"><button class="primary" data-act="save">Belge olarak kaydet</button>' +
-        '<button class="ghost" data-act="readforce">Ürün olarak oku</button><button class="ghost" data-act="cancel">İptal</button></div></div>';
+        (c.reason ? '' : '<button class="ghost" data-act="readforce">Ürün olarak oku</button>') + '<button class="ghost" data-act="cancel">İptal</button></div></div>';
     } else if (st.draft) {
       var d = st.draft, warn = d.rows.filter(function (r) { return r.warn; }).length, prod = {}, prodImg = {};
       d.rows.forEach(function (r) { var k = r.name + '|' + (r.sub || ''); prod[k] = true; if (r.img) prodImg[k] = true; });
@@ -865,7 +865,7 @@
       ['b3', 'Fiyatlar ve para birimi doğru geldi'],
       ['b4', 'Resimler doğru ürüne bağlandı'],
       ['b5', 'Sertifika / onay belgesi ürün olarak okunmadı, belge olarak açılıyor'],
-      ['b6', 'Okunamayan belgede uygulama nedenini açıkça söyledi']]],
+      ['b6', 'Ürün tablosu çıkmayan belgede uygulama nedenini söyledi ve belge olarak saklamayı önerdi']]],
     ['Okuma raporu', [
       ['o1', 'Belgeyi okuyunca uyarı nedenleri ve sayıları göründü'],
       ['o2', 'Okuma raporunu paylaşabildim ya da kopyalayabildim'],
@@ -1065,9 +1065,16 @@
       if (res.cert) {
         st.draft = { cert: true, pages: res.pages, rows: [], supplier: supplier, kind: 'sertifika', name: f.name, docId: uid() };
       } else if (!res.rows.length) {
-        st.draft = null;
-        st.readNote = res.textLength < 20 ? 'Belgede yazı yok: taranmış (resim) PDF. Bu tür belgeler henüz okunamıyor.' :
-          (res.images && res.images.length ? 'Tablo bulunamadı. Bu belgede tablolar resim olarak duruyor olabilir; bu tür belgeler henüz okunamıyor.' : 'Belgede ürün tablosu bulunamadı.');
+        // Ürün tablosu çıkmayan belge (tanıtım dosyası, taranmış katalog, tabloları resim olan katalog):
+        // kaybolmasın diye sayfa görüntüsü olarak saklanabilir.
+        var why = res.textLength < 20 ? 'Belgede yazı yok: sayfalar taranmış resim. Ürünler okunamadı.' :
+          (res.images && res.images.length ? 'Ürün tablosu bulunamadı. Bu bir tanıtım dosyası olabilir ya da tabloları resim olarak duruyor olabilir.' : 'Belgede ürün tablosu bulunamadı.');
+        st.draft = null; st.readNote = why;
+        if (/\.pdf$/i.test(f.name)) {
+          msg.textContent = 'Sayfa görüntüleri hazırlanıyor...';
+          var pg = await readFile(f, null, 'sertifika', false);
+          st.draft = { cert: true, pages: pg.pages, rows: [], supplier: supplier, kind: 'sertifika', name: f.name, docId: uid(), reason: why }; st.readNote = '';
+        }
       } else {
         var note = res.emptyPages ? res.emptyPages + ' sayfada yazı yok (taranmış resim); o sayfalar okunamadı.' : '';
         var dr = prepDraft(res.rows);
