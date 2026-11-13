@@ -9,7 +9,7 @@
   function fmt(n) { return (n == null || isNaN(n)) ? '—' : Math.round(n).toLocaleString('tr-TR') + ' TL'; }
   function today() { return new Date().toISOString().slice(0, 10); }
   function num(v) { var n = parseFloat(String(v).replace(',', '.')); return isNaN(n) ? 0 : n; }
-  function fold(s) { return String(s || '').toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c'); }
+  function fold(s) { return String(s || '').toLocaleLowerCase('tr-TR').replace(/ı/g, 'i').replace(/ş/g, 's').replace(/ğ/g, 'g').replace(/ü/g, 'u').replace(/ö/g, 'o').replace(/ç/g, 'c').replace(/\s+/g, ' ').trim(); }
   function codeKey(c) { return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, ''); }
   // I/L ile 1, O ile 0 karışmasın diye ortak bir anahtar
   function confKey(c) { return codeKey(c).replace(/[IL]/g, '1').replace(/O/g, '0'); }
@@ -38,8 +38,45 @@
   function load() { try { return Object.assign(empty(), JSON.parse(localStorage.getItem(KEY)) || {}); } catch (e) { return empty(); } }
   function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('Kayıt alanı doldu. Yedek alıp eski belgeleri silin.'); } }
 
+  // Ürün resimleri çok yer kapladığı için ayrı bir veritabanında (IndexedDB) tutulur
+  var idb = null, imgCache = {};
+  function openImgDb() {
+    return new Promise(function (res, rej) {
+      if (!window.indexedDB) return rej(new Error('no indexeddb'));
+      var r = indexedDB.open('klavuz-img', 1);
+      r.onupgradeneeded = function () { r.result.createObjectStore('img'); };
+      r.onsuccess = function () { idb = r.result; res(idb); };
+      r.onerror = function () { rej(r.error); };
+    });
+  }
+  function putImg(id, url) {
+    imgCache[id] = url;
+    if (!idb) return;
+    try { var tx = idb.transaction('img', 'readwrite'); tx.objectStore('img').put(url, id); } catch (e) {}
+  }
+  function getImg(id) {
+    if (imgCache[id] !== undefined) return Promise.resolve(imgCache[id]);
+    if (!idb) return Promise.resolve(null);
+    return new Promise(function (res) {
+      try {
+        var rq = idb.transaction('img').objectStore('img').get(id);
+        rq.onsuccess = function () { imgCache[id] = rq.result || null; res(imgCache[id]); };
+        rq.onerror = function () { res(null); };
+      } catch (e) { res(null); }
+    });
+  }
+  function hydrateImages(root) {
+    (root || document).querySelectorAll('[data-img]').forEach(function (el) {
+      var id = el.dataset.img;
+      getImg(id).then(function (url) {
+        if (url && el.isConnected && el.dataset.img === id) el.innerHTML = '<img alt="" src="' + url + '">';
+      });
+    });
+  }
+
   function offersOf(itemId) { return Object.values(db.offers).filter(function (o) { return o.itemId === itemId; }); }
   function buyOf(o) { return o.listPrice == null ? null : Math.round(o.listPrice * (1 - (o.supDisc || 0) / 100)); }
+  function sizeSort(a, b) { return String(a.size || '').localeCompare(String(b.size || ''), 'tr', { numeric: true }); }
   function similarItems(item) {
     var tk = tokens(item.name);
     return Object.values(db.items).filter(function (x) {
@@ -51,11 +88,12 @@
   }
   function mergeItems(fromId, toId) {
     offersOf(fromId).forEach(function (o) { o.itemId = toId; });
+    if (db.items[fromId] && db.items[fromId].hasImg && !db.items[toId].hasImg) { putImg(toId, imgCache[fromId] || null); db.items[toId].hasImg = true; }
     delete db.items[fromId]; save();
   }
 
   // ---------- Belge okuma ----------
-  var CODE_RE = /^[A-Za-z0-9][A-Za-z0-9\-\/\.]{3,}$/;
+  var CODE_RE = /^[A-Za-z0-9][A-Za-z0-9\-\/\.]{4,}$/;
   var MONEY_RE = /\d{1,3}(?:\.\d{3})+(?:,\d{1,2})?\s?(?:TL|₺)?|\d+,\d{1,2}\s?(?:TL|₺)?|\d+\s?(?:TL|₺)/gi;
   var MONEY_EXACT = /^(?:\d{1,3}(?:\.\d{3})+|\d+)(?:,\d{1,2})?\s?(?:TL|₺)?$/i;
   var SIZE_RE = /\d+\/\d+\s?"?|DN\s?\d+|M\d+(?:x\d+(?:[.,]\d+)?)?\b|\d+(?:[.,]\d+)?\s?(?:mm|cm|bar|kg|lt|inç|")/i;
@@ -91,7 +129,14 @@
     else if (/[ILO]/.test(code.toUpperCase())) warn = 'kodu kontrol edin (I/L/1, O/0 karışabilir)';
     return { code: code || '', name: name, size: size, price: price, warn: warn };
   }
-  function parseLines(lines) { return lines.map(parseLine).filter(Boolean); }
+  function parseLines(lines) {
+    return lines.map(function (l) {
+      var text = typeof l === 'string' ? l : l.text;
+      var r = parseLine(text);
+      if (r && typeof l === 'object') { r.page = l.page; r.y = l.y; r.x = l.x; }
+      return r;
+    }).filter(Boolean);
+  }
   function parseCells(cells) {
     var code = null, price = null, size = '', names = [];
     cells.forEach(function (c) {
@@ -111,13 +156,16 @@
     var warn = !code ? 'kod yok' : (price == null ? 'fiyat yok' : null);
     return { code: code || '', name: names[0] || '', size: size, price: price, warn: warn };
   }
+
+  // PDF: metin satırları + sayfadaki resimler (her resim, sayfa üzerindeki yerine göre kırpılır)
   async function readPdf(file, prog) {
     if (typeof pdfjsLib === 'undefined') throw new Error('PDF okuyucu yüklenemedi. İnternet bağlantısını kontrol edin.');
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
     var pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-    var lines = [];
+    var OPS = pdfjsLib.OPS, lines = [], images = [];
     for (var p = 1; p <= pdf.numPages; p++) {
-      var page = await pdf.getPage(p), tc = await page.getTextContent(), byY = new Map();
+      var page = await pdf.getPage(p);
+      var tc = await page.getTextContent(), byY = new Map();
       tc.items.forEach(function (it) {
         if (!it.str) return;
         var y = Math.round(it.transform[5] / 3) * 3;
@@ -125,24 +173,80 @@
         byY.get(y).push(it);
       });
       Array.from(byY.keys()).sort(function (a, b) { return b - a; }).forEach(function (y) {
-        lines.push(byY.get(y).sort(function (a, b) { return a.transform[4] - b.transform[4]; }).map(function (i) { return i.str; }).join(' '));
+        var items = byY.get(y).sort(function (a, b) { return a.transform[4] - b.transform[4]; });
+        // Aynı satırdaki farklı sütunları (aralarında boşluk varsa) ayrı satır say
+        var segs = [], cur = null, prevEnd = 0;
+        items.forEach(function (it) {
+          var x = it.transform[4];
+          if (!cur || x - prevEnd > 8) { cur = { parts: [], x: x }; segs.push(cur); }
+          cur.parts.push(it.str); prevEnd = x + (it.width || 0);
+        });
+        segs.forEach(function (sg) { lines.push({ text: sg.parts.join(' '), page: p, y: y, x: sg.x }); });
       });
+
+      // Sayfadaki resim yerleri
+      var ops = await page.getOperatorList(), boxes = [], ctm = [1, 0, 0, 1, 0, 0], stack = [];
+      for (var k = 0; k < ops.fnArray.length; k++) {
+        var fn = ops.fnArray[k], a = ops.argsArray[k];
+        if (fn === OPS.save) stack.push(ctm.slice());
+        else if (fn === OPS.restore) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+        else if (fn === OPS.transform) ctm = mulM(a, ctm);
+        else if (fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject) {
+          var w = Math.abs(ctm[0]) + Math.abs(ctm[2]), h = Math.abs(ctm[1]) + Math.abs(ctm[3]);
+          if (w >= 30 && h >= 30) boxes.push({ x: ctm[4], y: ctm[5], w: w, h: h });
+        }
+      }
+      if (boxes.length) {
+        var vp = page.getViewport({ scale: 2 });
+        var cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+        await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
+        boxes.forEach(function (b) {
+          var r = vp.convertToViewportRectangle([b.x, b.y, b.x + b.w, b.y + b.h]);
+          var sx = Math.min(r[0], r[2]), sy = Math.min(r[1], r[3]), sw = Math.abs(r[2] - r[0]), sh = Math.abs(r[3] - r[1]);
+          if (sw < 60 || sh < 60) return;
+          if (sw * sh > 0.5 * cv.width * cv.height) return; // sayfa arka planı ya da büyük banner
+          var s = Math.min(1, 240 / Math.max(sw, sh)), t = document.createElement('canvas');
+          t.width = Math.max(1, Math.round(sw * s)); t.height = Math.max(1, Math.round(sh * s));
+          t.getContext('2d').drawImage(cv, sx, sy, sw, sh, 0, 0, t.width, t.height);
+          images.push({ page: p, cy: b.y + b.h / 2, cx: b.x + b.w / 2, url: t.toDataURL('image/jpeg', 0.8) });
+        });
+      }
       if (prog) prog(p, pdf.numPages);
     }
-    return lines;
+    return { lines: lines, images: images };
+  }
+  // PDF matris çarpımı: yeni CTM = m × eski CTM
+  function mulM(m, c) {
+    return [m[0] * c[0] + m[1] * c[2], m[0] * c[1] + m[1] * c[3],
+      m[2] * c[0] + m[3] * c[2], m[2] * c[1] + m[3] * c[3],
+      m[4] * c[0] + m[5] * c[2] + c[4], m[4] * c[1] + m[5] * c[3] + c[5]];
+  }
+  // Her resmi, aynı sayfadaki en yakın ürün satırına bağla
+  function attachImages(rows, images) {
+    images.forEach(function (im) {
+      var best = null, bd = Infinity;
+      rows.forEach(function (r) {
+        if (r.page !== im.page || r.img || r.y == null) return;
+        var d = Math.abs(r.y - im.cy) + 0.5 * Math.abs((r.x || 0) - im.cx);
+        if (d < bd) { bd = d; best = r; }
+      });
+      if (best && bd < 220) best.img = im.url;
+    });
+    return rows;
   }
   async function readFile(file, prog) {
     var n = file.name.toLowerCase();
     if (/\.pdf$/.test(n)) {
-      var lines = await readPdf(file, prog);
-      return { rows: parseLines(lines), textLength: lines.join('').length };
+      var res = await readPdf(file, prog);
+      var rows = attachImages(parseLines(res.lines), res.images);
+      return { rows: rows, textLength: res.lines.reduce(function (s, l) { return s + l.text.length; }, 0) };
     }
     if (/\.(xlsx|xls|csv|ods)$/.test(n)) {
       if (typeof XLSX === 'undefined') throw new Error('Excel okuyucu yüklenemedi. İnternet bağlantısını kontrol edin.');
       var wb = XLSX.read(await file.arrayBuffer(), { type: 'array' }), out = [];
       wb.SheetNames.forEach(function (sn) {
         XLSX.utils.sheet_to_json(wb.Sheets[sn], { header: 1, raw: true, defval: '' }).forEach(function (r) {
-          var p = parseCells(r); if (p) out.push(p);
+          var pr = parseCells(r); if (pr) out.push(pr);
         });
       });
       return { rows: out, textLength: 1 };
@@ -159,7 +263,10 @@
     });
     return rows;
   }
-  // Belgeyi veritabanına işle: aynı tedarikçi + aynı kod ise güncelle, değiştiyse geçmişe yaz
+  // Belgeyi veritabanına işle
+  // - Aynı tedarikçi + aynı kod: teklifi günceller, fiyat değiştiyse geçmişe yazar
+  // - Aynı tedarikçi + aynı ürün adı: aynı ürün kartına yeni varyant (ölçü/kod) olarak ekler
+  // - Yeni ürün: yeni kart oluşturur
   function commit(rows, supplier, kind, docName) {
     var docId = uid(), res = { created: 0, updated: 0, changed: 0, pending: 0 };
     rows.forEach(function (r) {
@@ -177,20 +284,30 @@
         if (r.size) off.size = r.size;
         off.status = r.warn ? 'check' : 'ok';
         off.updated = today(); off.docId = docId; res.updated++;
-      } else {
-        var pendingFlag = kind === 'fiyat';
-        var item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', brand: supplier, category: '', note: '', verified: !pendingFlag && !r.warn };
-        db.items[item.id] = item;
-        var o = { id: uid(), itemId: item.id, supplier: supplier, code: r.code || '', key: key, size: r.size || '',
-          listPrice: r.price, supDisc: 0, sellPrice: r.price, lastDir: null,
-          status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), updated: today(), docId: docId };
-        db.offers[o.id] = o; res.created++;
-        if (pendingFlag) res.pending++;
+        if (r.img) attachImg(db.items[off.itemId], r.img);
+        return;
       }
+      var pendingFlag = kind === 'fiyat';
+      var nm = fold(r.name);
+      var item = nm ? Object.values(db.items).find(function (it) { return fold(it.name) === nm && it.brand === supplier; }) : null;
+      if (!item) {
+        item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', brand: supplier, category: '', note: '', verified: !pendingFlag && !r.warn, hasImg: false };
+        db.items[item.id] = item;
+      } else if (!pendingFlag && !r.warn) item.verified = true;
+      if (r.img) attachImg(item, r.img);
+      var o = { id: uid(), itemId: item.id, supplier: supplier, code: r.code || '', key: key, size: r.size || '',
+        listPrice: r.price, supDisc: 0, sellPrice: r.price, lastDir: null,
+        status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), updated: today(), docId: docId };
+      db.offers[o.id] = o; res.created++;
+      if (pendingFlag) res.pending++;
     });
     db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length });
     save();
     return res;
+  }
+  function attachImg(item, url) {
+    if (!item || item.hasImg) return;
+    item.hasImg = true; putImg(item.id, url);
   }
 
   // ---------- Arama ----------
@@ -222,14 +339,21 @@
     if (offs.some(function (o) { return o.status === 'pending'; })) b += '<span class="badge b-pend">Ana katalogda yok, bekliyor</span>';
     return b;
   }
+  function thumb(it, cls) {
+    return '<div class="thumb ' + (cls || '') + '" data-img="' + it.id + '"><span>' + esc((it.name || '?').charAt(0).toUpperCase()) + '</span></div>';
+  }
   function card(it) {
-    var offs = offersOf(it.id);
+    var offs = offersOf(it.id).sort(sizeSort);
     var best = offs.filter(function (o) { return o.sellPrice != null; }).sort(function (a, b) { return a.sellPrice - b.sellPrice; })[0];
     var codes = offs.map(function (o) { return o.code; }).filter(Boolean).join(', ');
     var sup = Array.from(new Set(offs.map(function (o) { return o.supplier; }))).join(', ');
-    return '<div class="card" data-item="' + it.id + '"><b>' + esc(it.name) + '</b>' +
+    var sizes = offs.map(function (o) { return o.size; }).filter(Boolean).join(' · ');
+    return '<div class="card pcard" data-item="' + it.id + '">' + thumb(it) +
+      '<div class="ptxt"><b>' + esc(it.name) + '</b>' +
       '<div class="muted">' + esc(sup) + (codes ? ' · ' + esc(codes) : '') + '</div>' +
-      '<div class="row"><span>' + (best ? 'Öneri satış ' + fmt(best.sellPrice) : 'Fiyat yok') + '</span><span>' + badgesOf(it, offs) + '</span></div></div>';
+      (sizes ? '<div class="muted">Ölçü: ' + esc(sizes) + '</div>' : '') +
+      '<div class="price">' + (best ? (offs.length > 1 ? 'Başlangıç ' : '') + fmt(best.sellPrice) : 'Fiyat yok') + '</div>' +
+      '<div>' + badgesOf(it, offs) + '</div></div></div>';
   }
   function drawResults() {
     var q = st.q.trim();
@@ -238,10 +362,11 @@
     $('#sugg').innerHTML = q ? suggestions(q) : '';
     $('#results').innerHTML = items.length ? items.slice(0, 200).map(card).join('') :
       '<p class="muted">' + (Object.keys(db.items).length ? 'Sonuç yok.' : 'Henüz ürün yok. Belge sekmesinden bir katalog yükleyin.') + '</p>';
+    hydrateImages($('#results'));
   }
 
   // ---------- Ekranlar ----------
-  var st = { tab: 'ara', q: '', item: null, draft: null, catSupplier: '', catKind: 'katalog', histOffer: null };
+  var st = { tab: 'ara', q: '', item: null, variant: null, draft: null, catSupplier: '', catKind: 'katalog', histOffer: null };
 
   function viewSearch() {
     return '<div class="card"><input type="search" id="q" placeholder="Ürün adı, kod veya marka" value="' + esc(st.q) + '"></div>' +
@@ -275,12 +400,27 @@
   function viewItem(id) {
     var it = db.items[id];
     if (!it) return '<div class="card"><p>Ürün bulunamadı.</p></div>';
-    var offs = offersOf(id), sim = similarItems(it);
+    var offs = offersOf(id).sort(sizeSort), sim = similarItems(it);
+    if (!offs.length) return '<div class="card"><p class="muted">Bu üründe teklif yok.</p></div>';
+    var sel = offs.filter(function (o) { return o.id === st.variant; })[0] || offs[0];
+    st.variant = sel.id;
+    var variants = offs.length > 1 ? '<div class="variants">' + offs.map(function (o) {
+      return '<button class="chip' + (o.id === sel.id ? ' on' : '') + '" data-act="variant" data-id="' + o.id + '">' +
+        esc(o.size || o.code || '—') + '<small>' + fmt(o.sellPrice) + '</small></button>';
+    }).join('') + '</div>' : '';
     return '<button class="link" data-act="back">← Geri</button>' +
-      '<div class="card"><h2>' + esc(it.name) + '</h2><div>' + badgesOf(it, offs) + '</div>' +
-      '<label>Not <input data-note="' + id + '" value="' + esc(it.note || '') + '"></label>' +
-      '<div><button class="danger" data-act="delitem" data-id="' + id + '">Ürünü sil</button></div></div>' +
-      '<div class="card"><h3>Tedarikçi teklifleri</h3>' + (offs.map(offerRow).join('') || '<p class="muted">Teklif yok.</p>') + '</div>' +
+      '<div class="card detail">' + thumb(it, 'hero') +
+      '<div><h2>' + esc(it.name) + '</h2><div class="muted">' + esc(it.brand) + (sel.code ? ' · kod ' + esc(sel.code) : '') + '</div></div>' +
+      '<div>' + badgesOf(it, offs) + '</div>' + variants +
+      '<div class="bigprice">' + fmt(sel.sellPrice) + ' <span class="muted">(öneri satış' + (sel.size ? ', ' + esc(sel.size) : '') + ')</span></div>' +
+      '<div class="row"><button class="primary" data-act="addcart" data-id="' + sel.id + '">Sepete ekle</button>' +
+      '<button class="ghost" data-act="hist" data-id="' + sel.id + '">Fiyat geçmişi</button></div>' +
+      (st.histOffer === sel.id ? histHtml(sel.id) : '') +
+      '<div class="internal">Alış ' + fmt(buyOf(sel)) + ' · Kâr ' + fmt((sel.sellPrice || 0) - (buyOf(sel) || 0)) + '</div>' +
+      '</div>' +
+      '<div class="card"><h3>Tedarikçi teklifleri</h3>' + offs.map(offerRow).join('') + '</div>' +
+      '<div class="card"><label>Not <input data-note="' + id + '" value="' + esc(it.note || '') + '"></label>' +
+      '<div class="row"><button class="danger" data-act="delitem" data-id="' + id + '">Ürünü sil</button></div></div>' +
       (sim.length ? '<div class="card"><h3>Benzer ürünler (karar sizin)</h3>' + sim.map(function (x) {
         return '<div class="row"><span>' + esc(x.name) + ' · ' + esc(offersOf(x.id).map(function (o) { return o.code; }).join(', ')) +
           '</span><button class="ghost" data-act="merge" data-id="' + x.id + '">Aynı ürün, birleştir</button></div>';
@@ -299,9 +439,9 @@
       '<input type="file" id="docFile" accept=".pdf,.xlsx,.xls,.csv,.txt">' +
       '<div class="row"><button class="primary" data-act="read">Belgeyi oku</button><span class="muted" id="readMsg"></span></div></div>';
     if (st.draft) {
-      var d = st.draft, warn = d.rows.filter(function (r) { return r.warn; }).length;
+      var d = st.draft, warn = d.rows.filter(function (r) { return r.warn; }).length, withImg = d.rows.filter(function (r) { return r.img; }).length;
       h += '<div class="card"><h3>Kontrol: ' + esc(d.name) + '</h3>' +
-        '<div class="muted">' + d.rows.length + ' ürün okundu, ' + warn + ' tanesi kontrol gerektiriyor. Kaydetmeden önce kontrol edin.</div>' +
+        '<div class="muted">' + d.rows.length + ' ürün okundu, ' + warn + ' tanesi kontrol gerektiriyor, ' + withImg + ' tanesine resim eşleşti.</div>' +
         '<div class="scroll"><table><tr><th>Kod</th><th>Ürün</th><th>Ölçü</th><th>Fiyat</th><th>Not</th></tr>' +
         d.rows.slice(0, 300).map(function (r) {
           return '<tr><td>' + esc(r.code || '—') + '</td><td>' + esc(r.name) + '</td><td>' + esc(r.size) + '</td><td>' + fmt(r.price) + '</td><td>' + (r.warn ? '<span class="badge b-warn">' + esc(r.warn) + '</span>' : '') + '</td></tr>';
@@ -321,12 +461,12 @@
       var buy = (buyOf(o) || 0) * l.qty;
       sellBefore += amount; buyTotal += buy;
       cust.push({ name: it.name, code: o.code, size: o.size, qty: l.qty, amount: amount });
-      return '<div class="card"><div><b>' + esc(it.name) + '</b></div>' +
+      return '<div class="card pcard">' + thumb(it) + '<div class="ptxt"><b>' + esc(it.name) + '</b>' +
         '<div class="muted">' + esc(o.supplier) + ' · kod ' + esc(o.code || '—') + (o.size ? ' · ' + esc(o.size) : '') + '</div>' +
         '<div class="row"><span>Adet <input class="sm" type="number" min="1" data-qty="' + o.id + '" value="' + l.qty + '"></span>' +
         '<span>Kalem iskontosu <input class="sm" type="number" data-ldisc="' + o.id + '" value="' + (l.disc || 0) + '">%</span></div>' +
         '<div class="row"><span>Satış ' + fmt(amount) + '</span><span class="internal">Alış ' + fmt(buy) + '</span>' +
-        '<button class="link" data-act="cartdel" data-id="' + o.id + '">Kaldır</button></div></div>';
+        '<button class="link" data-act="cartdel" data-id="' + o.id + '">Kaldır</button></div></div></div>';
     }).join('');
     var cd = db.cartDiscount || 0, net = sellBefore * (1 - cd / 100), profit = net - buyTotal;
     var custText = customerText(cust, cd, net);
@@ -384,7 +524,7 @@
       '<label>Firma adı <input data-set="company" value="' + esc(s.company) + '"></label>' +
       '<label>Telefon <input data-set="phone" value="' + esc(s.phone) + '"></label>' +
       '<label>Teklif notu <input data-set="note" value="' + esc(s.note) + '"></label></div>' +
-      '<div class="card"><h3>Yedek</h3><div class="muted">Veriler bu cihazın tarayıcısında saklanır. Düzenli yedek alın.</div>' +
+      '<div class="card"><h3>Yedek</h3><div class="muted">Veriler bu cihazın tarayıcısında saklanır. Düzenli yedek alın. Ürün resimleri yedeğe dahil değildir.</div>' +
       '<div class="row"><button data-act="export">Yedek indir</button>' +
       '<label style="flex-direction:row;align-items:center;gap:6px">Yedekten yükle <input type="file" id="importFile" accept=".json"></label></div></div>' +
       '<div class="card"><button class="danger" data-act="wipe">Tüm verileri sil</button></div>';
@@ -404,10 +544,11 @@
     else if (st.tab === 'sepet') v.innerHTML = viewCart();
     else if (st.tab === 'uyari') v.innerHTML = viewAlerts();
     else if (st.tab === 'ayar') v.innerHTML = viewSettings();
+    hydrateImages(v);
     window.scrollTo(0, 0);
   }
   function go(tab) { st.tab = tab; st.item = null; render(); }
-  function openItem(id) { st.item = id; render(); }
+  function openItem(id) { st.item = id; st.variant = null; render(); }
   function addCart(oid) {
     var l = db.cart.find(function (x) { return x.offerId === oid; });
     if (l) l.qty++; else db.cart.push({ offerId: oid, qty: 1, disc: 0 });
@@ -451,6 +592,7 @@
     var id = el.dataset.id;
     switch (el.dataset.act) {
       case 'back': st.item = null; render(); break;
+      case 'variant': st.variant = id; render(); break;
       case 'addcart': addCart(id); break;
       case 'hist': st.histOffer = st.histOffer === id ? null : id; render(); break;
       case 'ack': if (db.offers[id]) { db.offers[id].lastDir = null; save(); } render(); break;
@@ -458,7 +600,8 @@
       case 'delitem':
         if (!confirm('Bu ürün ve tüm teklifleri silinsin mi?')) break;
         offersOf(id).forEach(function (o) { delete db.offers[o.id]; });
-        delete db.items[id];
+        delete db.items[id]; delete imgCache[id];
+        if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').delete(id); } catch (e2) {}
         db.cart = db.cart.filter(function (l) { return db.offers[l.offerId]; });
         st.item = null; save(); render(); break;
       case 'cartdel': db.cart = db.cart.filter(function (l) { return l.offerId !== id; }); save(); render(); break;
@@ -467,7 +610,7 @@
       case 'save': saveDraft(); break;
       case 'cancel': st.draft = null; render(); break;
       case 'export': exportData(); break;
-      case 'wipe': if (confirm('Tüm veriler silinsin mi? Bu işlem geri alınamaz.')) { db = empty(); save(); render(); } break;
+      case 'wipe': if (confirm('Tüm veriler silinsin mi? Bu işlem geri alınamaz.')) { db = empty(); imgCache = {}; if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').clear(); } catch (e3) {} save(); render(); } break;
       case 'print': window.print(); break;
       case 'copy': copyText(); break;
     }
@@ -477,8 +620,8 @@
   });
   document.addEventListener('change', function (e) {
     var t = e.target, d = t.dataset;
-    if (d.sell) { var o = db.offers[d.sell]; if (o) o.sellPrice = t.value === '' ? null : num(t.value); save(); }
-    else if (d.disc) { var o2 = db.offers[d.disc]; if (o2) o2.supDisc = num(t.value); save(); }
+    if (d.sell) { var o = db.offers[d.sell]; if (o) o.sellPrice = t.value === '' ? null : num(t.value); save(); if (st.item) render(); }
+    else if (d.disc) { var o2 = db.offers[d.disc]; if (o2) o2.supDisc = num(t.value); save(); if (st.item) render(); }
     else if (d.note) { if (db.items[d.note]) db.items[d.note].note = t.value; save(); }
     else if (d.qty) { var l = db.cart.find(function (x) { return x.offerId === d.qty; }); if (l) l.qty = Math.max(1, Math.round(num(t.value)) || 1); save(); render(); }
     else if (d.ldisc) { var l2 = db.cart.find(function (x) { return x.offerId === d.ldisc; }); if (l2) l2.disc = num(t.value); save(); render(); }
@@ -493,7 +636,7 @@
   });
 
   db = load();
-  render();
+  openImgDb().catch(function () {}).then(function () { render(); });
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(function () {});
   }
