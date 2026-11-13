@@ -1,5 +1,5 @@
-const CACHE = 'klavuz-v1';
-const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon.svg'];
+const CACHE = 'klavuz-v2';
+const SHELL = ['./', './index.html', './app.js', './okuyucu.js', './vendor/pdf.min.js', './vendor/pdf.worker.min.js', './vendor/xlsx.full.min.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

@@ -16,15 +16,16 @@ Tedarikçi kataloglarını ürün kartlarına çeviren, arama ve teklif hazırla
 - Veriler cihazın tarayıcısında saklanır. Ayarlar > Yedek ile düzenli yedek alın.
 - Ana katalog ve fiyat listesi ayrı belge olarak yüklenebilir. Fiyat listesindeki kod ana katalogda yoksa "bekliyor" olarak işaretlenir.
 
-## Bilinen sınırlar (ilk sürüm)
+## Bilinen sınırlar
 
-- Taranmış (resim) PDF'lerde metin okunamaz. Bu belgeler için ayrı bir okuma adımı gerekir.
-- Okuma iki kez yapılmaz. Şüpheli kodlar (I/L/1, O/0) "kontrol edin" diye işaretlenir.
+- Taranmış PDF'ler ve tabloları resim olarak duran kataloglar okunamaz (OCR gerekir). Uygulama bunu açıkça bildirir.
+- Tablosu olmayan, serbest yazılı belgelerde yalnızca kodu ve fiyatı aynı satırda olan ürünler okunur.
 - Web sitesinden ürün ekleme, Google Drive ile eşitleme ve TeklifX entegrasyonu sonraki aşamalardadır.
-- Tarayıcı depolama sınırı yaklaşık 5 MB'dır. Çok büyük kataloglarda sınıra yaklaşılabilir.
 
 ## Dosyalar
 
 - `index.html` — ekran iskeleti
-- `app.js` — tüm uygulama mantığı
+- `app.js` — ekranlar ve veri
+- `okuyucu.js` — belge okuyucu (PDF tablolarını ürüne çevirir)
+- `vendor/` — PDF ve Excel kütüphaneleri (uygulamanın içinde, internet gerekmez)
 - `sw.js`, `manifest.json`, `icon.svg` — uygulamayı telefona kurma ve çevrimdışı açma

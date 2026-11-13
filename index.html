@@ -7,12 +7,11 @@
 <title>Klavuz</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root { --ink:#1F2937; --muted:#6B7280; --bg:#F3F4F6; --card:#fff; --dark:#1E293B; --gold:#F59E0B; --line:#E5E7EB; --ok:#065F46; --okbg:#ECFDF5; --warn:#92400E; --warnbg:#FEF3C7; --pend:#1E3A8A; --pendbg:#EFF6FF; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#E5E7EB; --muted:#9CA3AF; --bg:#0F172A; --card:#1E293B; --line:#334155; } }
   * { box-sizing: border-box; }
-  body { margin:0; font-family: Inter, system-ui, sans-serif; color:var(--ink); background:var(--bg); padding-bottom:76px; }
+  body { margin:0; font-family: Inter, system-ui, sans-serif; color:var(--ink); background:var(--bg); padding-bottom:calc(96px + env(safe-area-inset-bottom)); }
   header.top { background:var(--dark); color:#fff; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:5; }
   header.top b { font-size:20px; }
   main { max-width:960px; margin:0 auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
@@ -42,11 +41,18 @@
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th, td { padding:6px; border-top:1px solid var(--line); text-align:left; vertical-align:top; }
   .scroll { overflow-x:auto; max-height:360px; overflow-y:auto; }
-  nav.tabs { position:fixed; bottom:0; left:0; right:0; background:#fff; border-top:1px solid var(--line); display:flex; justify-content:space-around; padding:6px 0 calc(8px + env(safe-area-inset-bottom)); z-index:6; }
-  nav.tabs button { background:none; color:var(--muted); font-size:12px; font-weight:500; display:flex; flex-direction:column; align-items:center; gap:2px; padding:6px 10px; }
-  nav.tabs button.on { color:var(--dark); font-weight:700; }
-  nav.tabs .n { background:var(--gold); color:#111827; border-radius:999px; padding:0 6px; font-size:11px; }
-  #toast { position:fixed; left:50%; bottom:86px; transform:translateX(-50%) translateY(20px); background:var(--dark); color:#fff; padding:10px 16px; border-radius:8px; opacity:0; transition:.25s; pointer-events:none; font-size:14px; max-width:90%; z-index:9; }
+  nav.tabs { position:fixed; bottom:0; left:0; right:0; background:var(--card); border-top:1px solid var(--line); display:flex; justify-content:space-around; align-items:flex-end; padding:8px 4px calc(8px + env(safe-area-inset-bottom)); z-index:6; }
+  nav.tabs button { --c:#1E293B; flex:1; background:none; color:var(--muted); font-size:12px; font-weight:500; display:flex; flex-direction:column; align-items:center; gap:4px; padding:0; position:relative; }
+  nav.tabs button[data-tab="ara"] { --c:#14B8A6; } nav.tabs button[data-tab="katalog"] { --c:#2563EB; } nav.tabs button[data-tab="sepet"] { --c:#7C3AED; }
+  nav.tabs button[data-tab="uyari"] { --c:#F59E0B; } nav.tabs button[data-tab="ayar"] { --c:#F97316; }
+  nav.tabs .ic { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center; transition:transform .18s, background .18s, box-shadow .18s; }
+  nav.tabs .ic svg { width:24px; height:24px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; }
+  nav.tabs button.on { color:var(--ink); font-weight:700; }
+  nav.tabs button.on .ic { background:var(--c); color:#fff; transform:translateY(-12px); box-shadow:0 0 0 5px color-mix(in srgb, var(--c) 28%, transparent), 0 6px 16px color-mix(in srgb, var(--c) 55%, transparent); }
+  nav.tabs .n { position:absolute; top:-4px; left:calc(50% + 8px); background:var(--gold); color:#111827; border-radius:999px; padding:0 6px; font-size:11px; font-weight:700; line-height:18px; min-width:18px; }
+  nav.tabs .n.zero { display:none; }
+  @media (prefers-reduced-motion: reduce) { nav.tabs .ic { transition:none; } }
+  #toast { position:fixed; left:50%; bottom:calc(104px + env(safe-area-inset-bottom)); transform:translateX(-50%) translateY(20px); background:var(--dark); color:#fff; padding:10px 16px; border-radius:8px; opacity:0; transition:.25s; pointer-events:none; font-size:14px; max-width:90%; z-index:9; }
   #toast.show { opacity:1; transform:translateX(-50%); }
   .pcard { flex-direction:row; gap:12px; align-items:center; }
   .ptxt { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1; }
@@ -78,6 +84,36 @@
   .btnlike { display:inline-block; padding:9px 12px; border-radius:8px; border:1px solid var(--dark); color:var(--dark); text-decoration:none; font-weight:600; background:#fff; }
   .danger-text { color:#B91C1C; }
   .thumb.hero img { height:100%; }
+  .sub { font-size:14px; color:var(--ink); margin:2px 0; }
+  .specs { display:flex; flex-wrap:wrap; gap:6px; }
+  .specs span { background:var(--pendbg); color:var(--pend); border-radius:6px; padding:3px 8px; font-size:13px; }
+  img.mini { width:36px; height:36px; object-fit:contain; background:#fff; border-radius:4px; display:block; }
+  img.certprev { max-width:100%; max-height:320px; object-fit:contain; border:1px solid var(--line); border-radius:8px; background:#fff; align-self:flex-start; }
+  .docpages { display:flex; flex-direction:column; gap:10px; }
+  .docpages img { width:100%; border:1px solid var(--line); border-radius:8px; background:#fff; }
+  h1.ptitle { margin:4px 0; font-size:24px; }
+  .sect { padding:0; gap:0; overflow:hidden; }
+  .sect > *:not(.secthead) { margin:0 14px 12px; }
+  .secthead { background:none; color:var(--ink); display:flex; justify-content:space-between; align-items:center; gap:10px; padding:16px 14px; width:100%; text-align:left; font-size:16px; border-radius:0; }
+  .secthead .muted { display:flex; align-items:center; gap:8px; font-weight:600; }
+  .chev { font-style:normal; color:#14B8A6; font-size:22px; line-height:1; display:inline-block; transition:transform .15s; } .chev.up { transform:rotate(90deg); }
+  .pill { background:var(--warnbg); color:var(--warn); border-radius:999px; padding:2px 10px; font-size:13px; }
+  .fbsec { display:flex; flex-direction:column; gap:8px; border-top:1px solid var(--line); padding-top:12px; }
+  .fbrow { display:flex; align-items:center; gap:12px; }
+  .score { width:44px; height:44px; flex:none; border-radius:50%; display:flex; align-items:center; justify-content:center; font-weight:700; color:#0F172A; border:2px solid rgba(15,23,42,.25); }
+  input[type=range] { -webkit-appearance:none; appearance:none; flex:1; height:26px; padding:0; border:0; border-radius:999px; background:linear-gradient(90deg,#FCA5A5,#FCD34D,#93C5FD,#A7F3D0,#6EE7A0); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:30px; height:30px; border-radius:50%; background:#fff; border:3px solid #0F172A; }
+  input[type=range]::-moz-range-thumb { width:26px; height:26px; border-radius:50%; background:#fff; border:3px solid #0F172A; }
+  textarea { font:inherit; padding:9px 10px; border:1px solid #D1D5DB; border-radius:8px; background:#fff; color:#111827; width:100%; resize:vertical; }
+  button.wa { background:#14B8A6; color:#fff; padding:14px; font-size:16px; }
+  button.soft { background:#E2E8F0; color:#0F172A; padding:12px; }
+  .sect h4 { margin-top:6px; margin-bottom:6px; font-size:15px; }
+  .vt { border:1px solid var(--line); border-radius:10px; padding:10px; display:flex; flex-direction:column; gap:8px; font-size:14px; }
+  .vtrow { display:flex; gap:8px; align-items:center; } .vtrow input { flex:1; }
+  .vb { width:48px; height:44px; flex:none; background:#fff; color:#334155; border:1px solid #CBD5E1; font-size:18px; padding:0; }
+  .vb.ok.on { background:#14B8A6; color:#fff; border-color:#14B8A6; } .vb.bad.on { background:#DC2626; color:#fff; border-color:#DC2626; }
+  label.chk { flex-direction:row; align-items:center; gap:8px; }
+  .kv { display:flex; justify-content:space-between; gap:10px; border-top:1px solid var(--line); padding-top:8px; font-size:14px; } .kv span { color:var(--muted); }
   @media print {
     body * { visibility:hidden; }
     #cust, #cust * { visibility:visible; }
@@ -90,16 +126,18 @@
 <header class="top"><b>Klavuz</b><button id="bell" class="bell bell-green" data-tab="uyari" aria-label="Uyarılar"><i>🔔</i><span></span></button></header>
 <main id="view"></main>
 <nav class="tabs">
-  <button data-tab="ara">🔎<span>Ara</span></button>
-  <button data-tab="katalog">📄<span>Belge</span></button>
-  <button data-tab="sepet">🧾<span>Sepet <span class="n" id="cartBadge">0</span></span></button>
-  <button data-tab="uyari">🔔<span>Uyarılar <span class="n" id="alertBadge">0</span></span></button>
-  <button data-tab="ayar">⚙️<span>Ayarlar</span></button>
+  <button data-tab="ara"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="M16 16l4.5 4.5"/></svg></span><span>Ara</span></button>
+  <button data-tab="katalog"><span class="ic"><svg viewBox="0 0 24 24"><path d="M7 3h7l4 4v14H7z"/><path d="M14 3v4h4M10 12h5M10 16h5"/></svg></span><span>Belge</span></button>
+  <button data-tab="sepet"><span class="ic"><svg viewBox="0 0 24 24"><path d="M4 5h2l2 10h9l2-7H7.5"/><circle cx="9.5" cy="19" r="1.3"/><circle cx="16.5" cy="19" r="1.3"/></svg></span><span>Sepet</span><span class="n zero" id="cartBadge">0</span></button>
+  <button data-tab="uyari"><span class="ic"><svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0112 0v6l1.5 2h-15z"/><path d="M10 21h4"/></svg></span><span>Uyarılar</span><span class="n zero" id="alertBadge">0</span></button>
+  <button data-tab="ayar"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg></span><span>Ayarlar</span></button>
 </nav>
 <div id="toast"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="vendor/pdf.min.js"></script>
+<script src="vendor/pdf.worker.min.js"></script>
+<script src="vendor/xlsx.full.min.js"></script>
+<script src="okuyucu.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

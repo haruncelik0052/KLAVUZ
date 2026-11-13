@@ -10,11 +10,24 @@ android {
         applicationId 'com.hcmarinworks.klavuz'
         minSdk 24
         targetSdk 34
-        versionCode 1
-        versionName '0.1.0'
+        versionCode 2
+        versionName '0.2.0'
+    }
+
+    // Test APK'ları hep aynı anahtarla imzalanır; böylece yeni sürüm eskisinin üstüne kurulur, veriler silinmez.
+    signingConfigs {
+        test {
+            storeFile file('klavuz-test.keystore')
+            storePassword 'klavuztest'
+            keyAlias 'klavuztest'
+            keyPassword 'klavuztest'
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig signingConfigs.test
+        }
         release {
             minifyEnabled false
         }

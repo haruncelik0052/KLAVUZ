@@ -6,7 +6,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Son commit: `37b8c88` (telefon geri bildirimi sürümü)
+- Güncel çalışma: `ccr-2f65d271-hbxt5y` dalı (sürüm 0.2.0)
 
 ## Dosyalar
 
@@ -16,7 +16,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 - `tests/e2e.js`: Playwright ile uçtan uca test. `tests/katalog.pdf` örnek belge
 - `README.md`: kullanım ve bilinen sınırlar
 
-Not: Workflow sadece `index.html app.js manifest.json icon.svg` dosyalarını APK'ya kopyalar. Yeni bir web dosyası eklenirse workflow'a da eklenmeli.
+Not: Workflow `index.html app.js okuyucu.js manifest.json icon.svg` dosyalarını ve `vendor/` klasörünü APK'ya kopyalar. Yeni bir web dosyası eklenirse workflow'a da eklenmeli.
 
 ## Test ve APK yayını
 
@@ -48,29 +48,32 @@ Not: Workflow sadece `index.html app.js manifest.json icon.svg` dosyalarını AP
 - TeklifX ve Google Drive entegrasyonu ilk sürüme alınmadı; sonraki aşama.
 - Web'den ürün ekleme ve resim çekme sonraki aşama.
 
-## Mevcut durum (37b8c88)
+## Mevcut durum (sürüm 0.2.0)
 
-Var olanlar:
-- PDF, Excel, CSV, TXT okuma; PDF'lerden ürün satırı ve resim çıkarma
-- Ürün kartı, ölçü chip'leri, varyant gruplama
-- Ara: filtre çipleri (Tümü, Kontrol gerekli, Doğrulanmamış, Resimsiz, Bekleyen)
-- Ürün sayfası: Doğrula, Düzelt, Sonraki kontrol, Belgeden resim seç, Web'de görsel ara bağlantısı
-- Fiyat geçmişi, sepet, müşteri çıktısı, yazdır/kopyala
-- Uyarılar ve bildirim ayarları (Ayarlar'dan açıp kapatma)
-- Belge silme (ilgili teklifler ve boşalan ürünler birlikte silinir)
-- Yedek indirme ve yükleme (resimler yedeğe dahil değil)
+Bu sürümde yapılanlar:
+- Belge okuyucu tablo mantığıyla yeniden yazıldı (`okuyucu.js`): tablo başlığı ürün adı olur, sütun adları kod / ölçü / fiyat / özellik olarak eşlenir, bir resim yanındaki tablonun tüm satırlarına bağlanır. Yan yana tablolar ve tablonun yanındaki açıklama yazıları ayrılır.
+- Resimler PDF'in içinden temiz alınır (üstüne yazı binmez), kenar boşlukları kırpılır.
+- Sertifika / onay yazıları ürün olarak okunmaz; sayfa görüntüsü olarak saklanır ve Belgeler'den açılır. Otomatik tanınır, kullanıcı "Ürün olarak oku" diyebilir.
+- PDF ve Excel kütüphaneleri uygulamanın içinde (`vendor/`); internet gerekmez.
+- Alt bar: seçili sekme yukarı kalkar ve kendi renginde ışık yakar; her sayfada görünür.
+- Ayarlar: "Deneyim ve öneri" (1-9 puan, deneyim, öneri, WhatsApp ile paylaş) ve "Sürüm testi" (✓ / ✗ listesi). Sürüm testi listesi `app.js` içindeki `VTEST` dizisidir; her sürümde güncellenmeli.
+- Yedek artık resimleri ve saklanan belgeleri de içerir. APK'da yedek dosyası Android'in "kaydet" penceresiyle yazılır.
+- Android: dış bağlantılar (WhatsApp, tarayıcı) uygulamanın dışında açılır. Test APK'ları sabit bir test anahtarıyla imzalanır (`android/app/klavuz-test.keystore`); böylece yeni sürüm eskisinin üstüne kurulur. Bu anahtar yalnızca test içindir, mağaza yayını için ayrı anahtar gerekir.
+- Kodsuz fiyat listelerinde (örn. depo listesi) aynı ürün + aynı ölçü aynı teklif sayılır; "ana katalogda yok" uyarısı yalnızca kodlu satırlara verilir.
+
+Testler:
+- `node tests/okuyucu.test.js` — okuyucu testleri (`tests/ornek/` altındaki gerçek sayfa örnekleriyle).
+- `python3 -m http.server 8080` sonra `node tests/e2e.js` — uçtan uca test (internetsiz).
+
+Dal notu: 0.2.0 çalışması `ccr-2f65d271-hbxt5y` dalında yapıldı (`ilk-surum` üzerine). APK iş akışı bu dalda da çalışır.
 
 ## Açık işler (öncelik sırasıyla)
 
-1. Kullanıcının telefondan geri bildirimini bekle (37b8c88 APK). Doğrulanmadı: WebView'da IndexedDB'nin `file://` altında kalıcılığı.
-2. Karşılaştırma ekranı: Ada boru ustası uygulamasındaki gibi, aynı ürünün iki veya daha fazla teklifini/varyantını yan yana gösterme. Kaynak sayfa görüntüsü de eklenebilir.
-3. Doğrulama akışı: Uyarılar'dan "Kontrole başla" ile sırayla kontrol.
-4. Arama arayüzünü Ada tarzına yaklaştırma.
-5. Telefondan galeri resmi ekleme; web'den görsel indirme.
-6. Resimleri yedeğe dahil etme.
-7. Tablo biçimindeki kataloglarda ürün adı ve ölçü sütunlarının bozuk okunması (kullanıcı ekran görüntüsü paylaştı; kısmen düzeltildi, doğrulanmadı).
-8. Standart satırları (ISO, EN, ASTM, UNS, DIN, JIS vb.) filtreleme listesini genişletme.
-9. Taranmış (resim) PDF'ler okunmuyor. OCR gerekir.
-10. Ayarlar'da uygulama arayüzünü kolayca değiştirebilecek küçük ayarlar (kullanıcı istedi, henüz yok).
-11. Kullanıcının telefonundaki eski bozuk veriyi temizleme: Belgeler listesinden silme ya da Ayarlar'dan tüm verileri silme.
-12. `main` dalına birleştirme ve GitHub Pages: sorulmadı, yapılmadı.
+1. Kullanıcının 0.2.0 telefon geri bildirimini bekle (Ayarlar > Sürüm testi). Doğrulanmadı: WebView'da resimlerin kalıcılığı, paylaşım ve yedek kaydetme pencereleri.
+2. OCR: taranmış PDF'ler ve tabloları resim olan kataloglar (örn. Flowmaster) okunamıyor.
+3. Karşılaştırma ekranı: aynı ürünün teklif ve varyantlarını yan yana gösterme.
+4. "Kontrole başla" akışını iyileştirme.
+5. Arama arayüzünü Ada tarzına yaklaştırma.
+6. Telefondan galeri resmi ekleme; web'den görsel indirme.
+7. Ayarlarda yazı boyutu gibi küçük arayüz ayarları.
+8. `main` dalına birleştirme ve GitHub Pages: sorulmadı, yapılmadı.
