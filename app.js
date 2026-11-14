@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.4.0';
+  var APP_VERSION = '0.5.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -37,7 +37,7 @@
   // ---------- Veri ----------
   var DEFAULT_NOTIFY = { up: true, down: true, below: true, pending: true, check: true };
   function empty() {
-    return { items: {}, offers: {}, history: [], docs: [], cart: [], cartDiscount: 0, feedback: {}, vtest: {},
+    return { items: {}, offers: {}, history: [], docs: [], cart: [], cartDiscount: 0, feedback: {}, vtest: {}, brands: {}, sellers: {}, learn: { name: {}, tok: {} },
       settings: { company: '', phone: '', note: 'Fiyatlar KDV hariçtir.', notify: Object.assign({}, DEFAULT_NOTIFY) } };
   }
   var db;
@@ -45,6 +45,7 @@
     d = Object.assign(empty(), d || {});
     d.settings = Object.assign(empty().settings, d.settings || {});
     d.settings.notify = Object.assign({}, DEFAULT_NOTIFY, d.settings.notify || {});
+    d.learn = { name: (d.learn && d.learn.name) || {}, tok: (d.learn && d.learn.tok) || {} };
     return d;
   }
   function loadLs() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
@@ -167,7 +168,7 @@
 
   // Ürünün teklifleri: her seferinde bütün teklifleri taramamak için dizin tutulur; her değişiklikte yenilenir.
   var offIdx = null;
-  function touch() { offIdx = null; }
+  function touch() { offIdx = null; sIdx = {}; }
   function offersOf(itemId) {
     if (!offIdx) { offIdx = {}; Object.values(db.offers).forEach(function (o) { (offIdx[o.itemId] = offIdx[o.itemId] || []).push(o); }); }
     return (offIdx[itemId] || []).slice();
@@ -204,6 +205,110 @@
   function itemCheckNeeded(it) {
     return !it.verified || offersOf(it.id).some(function (o) { return o.status === 'check'; });
   }
+
+  // ---------- Kategori, eş anlamlılar, marka ve satıcı ----------
+  // Kategori ağacının ilk hali. Anahtar sözcükler küçük harf ve Türkçe harfsiz (fold) yazılır.
+  // Uygulama ürünü adına bakarak kendisi ayırır; ayıramadığı "Kategorisiz" kalır, kullanıcı elle atar.
+  var CATS = [
+    ['vana', 'Vana', ['vana', 'valf', 'valve', 'cekvalf', 'kuresel', 'kelebek', 'surgulu', 'klape', 'musluk vana']],
+    ['rakor', 'Rakor ve bağlantı', ['rakor', 'fitting', 'nipel', 'nipple', 'manson', 'dirsek', 'elbow', 'reduksiyon', 'reducer', 'tapa', 'rekor', 'union', 'adaptor', 'adapter', 'kaplin', 'coupling', 'te', 'tee', 'istavroz', 'ek parca']],
+    ['hortum', 'Hortum', ['hortum', 'hose']],
+    ['kelepce', 'Kelepçe', ['kelepce', 'clamp']],
+    ['boru', 'Boru', ['boru', 'pipe', 'tube']],
+    ['flans', 'Flanş', ['flans', 'flange']],
+    ['pompa', 'Pompa', ['pompa', 'pump', 'hidrofor', 'impeller', 'santrifuj']],
+    ['filtre', 'Filtre ve süzgeç', ['filtre', 'filter', 'suzgec', 'strainer', 'separator', 'membran']],
+    ['depo', 'Depo ve tank', ['depo', 'tank', 'bidon']],
+    ['conta', 'Conta ve keçe', ['conta', 'gasket', 'oring', 'o-ring', 'kece', 'seal', 'salmastra']],
+    ['civata', 'Cıvata ve bağlantı elemanı', ['civata', 'somun', 'pul', 'vida', 'bolt', 'nut', 'screw', 'saplama', 'percin', 'dubel']],
+    ['elektrik', 'Elektrik', ['kablo', 'sigorta', 'salter', 'aku', 'battery', 'soket', 'switch', 'role', 'pano', 'invertor', 'redresor', 'fis', 'priz']],
+    ['aydinlatma', 'Aydınlatma', ['lamba', 'led', 'aydinlatma', 'light', 'fener', 'projektor', 'ampul', 'spot']],
+    ['guverte', 'Güverte donanımı', ['mapa', 'koc boynuzu', 'cleat', 'baba', 'mentese', 'hinge', 'kilit', 'tutamak', 'puntel', 'vardavela', 'kapak', 'lumbuz', 'havalandirma', 'makara']],
+    ['demir', 'Demirleme ve halat', ['capa', 'anchor', 'zincir', 'chain', 'irgat', 'windlass', 'halat', 'rope', 'kilitli', 'firdondu']],
+    ['sihhi', 'Banyo ve mutfak', ['batarya', 'musluk', 'lavabo', 'tuvalet', 'wc', 'dus', 'armatur', 'eviye', 'sifon', 'klozet']],
+    ['usturmaca', 'Usturmaca ve branda', ['usturmaca', 'fender', 'branda', 'tente', 'samandira']],
+    ['emniyet', 'Can güvenliği', ['can yelegi', 'can simidi', 'yangin', 'sondurucu', 'isaret fiseg', 'ilk yardim', 'emniyet']],
+    ['kimya', 'Boya ve kimyasal', ['boya', 'macun', 'silikon', 'yapistirici', 'yag', 'temizleyici', 'vernik', 'astar', 'zehirli', 'antifouling', 'gres']],
+    ['motor', 'Motor ve yürütme', ['motor', 'pervane', 'saft', 'anot', 'tutya', 'kayis', 'termostat', 'egzoz', 'buji', 'dumen', 'kumanda']],
+    ['olcu', 'Ölçü ve gösterge', ['manometre', 'gosterge', 'sensor', 'termometre', 'saat', 'debimetre', 'seviye']],
+    ['iklim', 'Isıtma ve soğutma', ['isitici', 'kalorifer', 'klima', 'esanjor', 'boyler', 'boiler', 'sofben', 'buzdolabi']]
+  ];
+  function catName(id) { for (var i = 0; i < CATS.length; i++) if (CATS[i][0] === id) return CATS[i][1]; return id ? id : 'Kategorisiz'; }
+  // Ürün adından kategori bul. Sıra: elle öğretilen ad -> anahtar sözcükler -> elle öğretilen sözcükler.
+  // "hortum kelepçesi" gibi adlarda ek almış sözcük (kelepçesi) asıl üründür; ona daha çok puan verilir.
+  function classify(name, sub) {
+    var L = db.learn, fn = fold(name);
+    if (L.name[fn]) return L.name[fn];
+    var nameToks = fn.split(/[^a-z0-9]+/).filter(Boolean), toks = nameToks.concat(fold(sub).split(/[^a-z0-9]+/).filter(Boolean));
+    var full = toks.join(' '), score = {}, first = {};
+    function add(c, v, i) { score[c] = (score[c] || 0) + v; if (!(c in first) || i < first[c]) first[c] = i; }
+    toks.forEach(function (t, i) {
+      var w = i < nameToks.length ? 2 : 1;
+      CATS.forEach(function (c) {
+        c[2].forEach(function (k) {
+          if (k.indexOf(' ') >= 0) return;
+          if (t === k) add(c[0], 2 * w, i);
+          else if (k.length >= 4 && t.indexOf(k) === 0) add(c[0], 3 * w, i);
+        });
+      });
+    });
+    CATS.forEach(function (c) { c[2].forEach(function (k) { if (k.indexOf(' ') >= 0 && full.indexOf(k) >= 0) add(c[0], 6, 0); }); });
+    if (!Object.keys(score).length) {
+      nameToks.forEach(function (t, i) { var lv = L.tok[t]; if (lv) Object.keys(lv).forEach(function (c) { add(c, lv[c], i); }); });
+    }
+    var best = '';
+    Object.keys(score).forEach(function (c) { if (!best || score[c] > score[best] || (score[c] === score[best] && first[c] < first[best])) best = c; });
+    return best;
+  }
+  // Elle atanan kategoriyi öğren ve henüz elle atanmamış benzer ürünlere uygula.
+  function setCategory(it, cat) {
+    it.category = cat; it.catBy = 'user';
+    var L = db.learn, fn = fold(it.name), n = 0;
+    if (cat) {
+      L.name[fn] = cat;
+      fn.split(/[^a-z0-9]+/).filter(function (t) { return t.length >= 4 && !/\d/.test(t); }).forEach(function (t) {
+        L.tok[t] = L.tok[t] || {}; L.tok[t][cat] = (L.tok[t][cat] || 0) + 1;
+      });
+    } else delete L.name[fn];
+    Object.values(db.items).forEach(function (x) {
+      if (x === it || x.catBy === 'user') return;
+      var c = classify(x.name, x.sub); if (c && c !== x.category) { x.category = c; x.catBy = 'auto'; n++; }
+    });
+    return n;
+  }
+  // Tarifle arama için Türkçe - İngilizce eş anlamlılar (fold edilmiş)
+  var SYN = [['vana', 'valf', 'valve'], ['hortum', 'hose'], ['rakor', 'fitting', 'baglanti'], ['kelepce', 'clamp'], ['pompa', 'pump'], ['flans', 'flange'],
+    ['dirsek', 'elbow'], ['paslanmaz', 'inox', 'stainless', 'aisi', '316', '304'], ['pirinc', 'brass'], ['bronz', 'bronze'], ['kuresel', 'ball'], ['cekvalf', 'check', 'geri donussuz'],
+    ['filtre', 'filter', 'suzgec', 'strainer'], ['conta', 'gasket', 'seal'], ['boru', 'pipe', 'tube'], ['depo', 'tank'], ['civata', 'bolt'], ['somun', 'nut'], ['vida', 'screw'],
+    ['kablo', 'cable'], ['lamba', 'light', 'aydinlatma'], ['capa', 'anchor', 'demir'], ['zincir', 'chain'], ['halat', 'rope'], ['mentese', 'hinge'], ['kelebek', 'butterfly'],
+    ['disli', 'threaded', 'vidali'], ['erkek', 'male'], ['disi', 'female'], ['reduksiyon', 'reducer'], ['manson', 'coupling', 'kaplin'], ['nipel', 'nipple'], ['tapa', 'plug'],
+    ['plastik', 'plastic', 'pvc'], ['bakir', 'copper'], ['aluminyum', 'aluminium', 'aluminum'], ['celik', 'steel'], ['su', 'water'], ['yakit', 'fuel', 'mazot', 'dizel'], ['yag', 'oil'],
+    ['hava', 'air'], ['sintine', 'bilge'], ['tuvalet', 'toilet', 'wc'], ['dus', 'shower'], ['musluk', 'batarya', 'faucet', 'tap'], ['inc', 'inch']];
+  function synOf(t) {
+    var out = [t];
+    SYN.forEach(function (g) {
+      if (g.some(function (w) { return w === t || (t.length >= 4 && (t.indexOf(w) === 0 || w.indexOf(t) === 0)); })) g.forEach(function (w) { if (out.indexOf(w) < 0) out.push(w); });
+    });
+    return out;
+  }
+  // Marka adı önerileri (kullanıcının katalog arşivindeki markalar); yalnızca yazarken öneri olarak çıkar.
+  var SEED_BRANDS = ['AKT Vanalar', 'Akyüz Sulama', 'Alarko', 'AS-EL Metal', 'ASMARINE', 'Boran Krom', 'Boss Paslanmaz', 'Deniztoptan', 'Doyuk Promosyon', 'DuPont FilmTec',
+    'E.C.A.', 'Elif Depo', 'Emir Metal', 'Eser Pompa', 'Fırat', 'Flowmaster Valves', 'FLOWX', 'GMORS', 'GS Marine', 'Gürgenler', 'HANSA-FLEX', 'Hisar Yapı', 'İdromar', 'Jetplas', 'Jets',
+    'LMC Makina', 'Marin İstanbul', 'Marineparts.fi', 'Matromarine', 'Oceo Marine', 'Oğuz Marine', 'Opacmare', 'Ormanlar Hortum', 'Pimplast', 'Pimtaş', 'Plastherm', 'Polyhose', 'RIPPA',
+    'Rushwarm', 'SEAFLO', 'Semler Industries', 'T-ISS', 'Tubend', 'Tubi Thor', 'Tuğra', 'Türlek', 'Twin Disc BCS', 'UKRA', 'Vamates', 'Waternet', 'Würth'];
+  function brandNames() { var o = {}; Object.values(db.items).forEach(function (it) { if (it.brand) o[it.brand] = 1; }); return Object.keys(o).sort(function (a, b) { return a.localeCompare(b, 'tr'); }); }
+  function sellerNames() { var o = {}; Object.values(db.offers).forEach(function (x) { if (x.supplier) o[x.supplier] = 1; }); return Object.keys(o).sort(function (a, b) { return a.localeCompare(b, 'tr'); }); }
+  // Belgedeki iletişim bilgileri (marka / satıcı kartını kendiliğinden doldurmak için)
+  var WEB_RE = /(?:https?:\/\/|www\.)[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi, MAIL_RE = /[a-z0-9._-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+/gi,
+    TEL_RE = /(?:\+90|0)[\s.(-]*\d{3}[\s.)-]*\d{3}[\s.-]*\d{2}[\s.-]*\d{2}/g;
+  function scanContacts(text, stat) {
+    var c = stat.contact = stat.contact || { web: {}, email: {}, phone: {} };
+    function cnt(o, v) { o[v] = (o[v] || 0) + 1; }
+    (text.match(WEB_RE) || []).forEach(function (v) { cnt(c.web, v.toLowerCase().replace(/^https?:\/\//, '')); });
+    (text.match(MAIL_RE) || []).forEach(function (v) { cnt(c.email, v.toLowerCase()); });
+    (text.match(TEL_RE) || []).forEach(function (v) { cnt(c.phone, v.replace(/[^\d+]/g, '')); });
+  }
+  function topOf(o) { var b = ''; Object.keys(o || {}).forEach(function (k) { if (!b || o[k] > o[b]) b = k; }); return b; }
 
   // ---------- Belge okuma ----------
   var CODE_RE = /^[A-Za-z0-9][A-Za-z0-9\-\/\.]{4,}$/;
@@ -350,6 +455,7 @@
         var text = items.map(function (i) { return i.str; }).join(' ');
         if (p === 1 && !o.force && Okuyucu.looksLikeCertificate(text + '\n', n)) return { cert: true, pages: await pageShots(pdf, o.prog) };
         stat.textLength += text.replace(/\s+/g, '').length;
+        scanContacts(text, stat);
         await readPage(page, items, p, OPS, cur, stat);
         page.cleanup();
         if (o.prog) o.prog(p, n, '');
@@ -580,7 +686,7 @@
   var jobs = [], running = false;
   function newStat() { return { textLength: 0, tableCount: 0, emptyPages: 0, infoTables: [], pageCount: 0, secs: 0, engine: '' }; }
   function jobMeta(j) {
-    return { id: j.id, docId: j.docId, name: j.name, fp: j.fp, supplier: j.supplier, kind: j.kind, force: !!j.force, status: j.status,
+    return { id: j.id, docId: j.docId, name: j.name, fp: j.fp, supplier: j.supplier, brand: j.brand || j.supplier, kind: j.kind, force: !!j.force, status: j.status,
       next: j.next, chunks: j.chunks, stat: j.stat, cert: !!j.cert, reason: j.reason || '', note: j.note || '', report: j.report || null, err: j.err || '' };
   }
   function saveJob(j) { return storePut('draft', 'job:' + j.id, jobMeta(j)); }
@@ -627,7 +733,7 @@
       jobs.push(j);
     });
   }
-  async function enqueue(files, supplier, kind) {
+  async function enqueue(files, brand, supplier, kind) {
     for (var i = 0; i < files.length; i++) {
       var file = files[i], fp = '';
       try { fp = await fingerprint(file); } catch (e) { fp = file.name + '-' + file.size; }
@@ -637,7 +743,7 @@
       else if (same) { toast(file.name + ' zaten sırada'); continue; }
       var dup = db.docs.filter(function (d) { return d.fp ? d.fp === fp : d.name === file.name; })[0];
       if (dup && !confirm('"' + file.name + '" daha önce yüklenmiş (' + dup.date + ', ' + dup.supplier + ').\nYeniden okunsun mu? Fiyatı değişen ürünler güncellenir.')) continue;
-      jobs.push({ id: uid(), docId: uid(), name: file.name, fp: fp, file: file, supplier: supplier, kind: kind, force: false, status: 'wait',
+      jobs.push({ id: uid(), docId: uid(), name: file.name, fp: fp, file: file, supplier: supplier, brand: brand, kind: kind, force: false, status: 'wait',
         next: 1, chunks: 0, stat: newStat(), rows: [], images: [], pages: null, prog: '' });
     }
     drawJobs(); pump();
@@ -689,7 +795,7 @@
     await saveJob(j);
   }
   function saveJobDraft(j) {
-    var r = commit({ rows: j.rows, images: j.images, pages: j.pages, cert: j.cert, supplier: j.supplier, kind: j.cert ? 'sertifika' : j.kind,
+    var r = commit({ rows: j.rows, images: j.images, pages: j.pages, cert: j.cert, supplier: j.supplier, brand: j.brand || j.supplier, contact: j.stat && j.stat.contact, kind: j.cert ? 'sertifika' : j.kind,
       name: j.name, docId: j.docId, report: j.report, fp: j.fp });
     dropJob(j);
     return r;
@@ -697,7 +803,8 @@
   function jobsHtml() {
     var ready = jobs.filter(function (j) { return j.status === 'ready'; });
     var h = jobs.map(function (j) {
-      var head = '<b>' + esc(j.name) + '</b><div class="muted">' + esc(j.supplier) + ' · ' + (KINDS[j.kind] || j.kind) + '</div>';
+      var who = esc(j.brand || j.supplier) + (j.brand && j.brand !== j.supplier ? ' · satıcı ' + esc(j.supplier) : '');
+      var head = '<b>' + esc(j.name) + '</b><div class="muted">' + who + ' · ' + (KINDS[j.kind] || j.kind) + '</div>';
       if (j.status === 'wait') return '<div class="card job"><div class="row"><span>' + head + '<div class="muted">Sırada' + (j.prog ? ' · ' + esc(j.prog) : '') + '</div></span><button class="link danger-text" data-act="jobdel" data-id="' + j.id + '">Çıkar</button></div></div>';
       if (j.status === 'run') return '<div class="card job"><div class="row"><span>' + head + '<div class="muted">Okunuyor · ' + esc(j.prog || 'başlıyor') + (j.rows.length ? ' · ' + j.rows.length + ' satır' : '') + '</div></span><button class="link danger-text" data-act="jobstop" data-id="' + j.id + '">Durdur</button></div>' +
         '<div class="bar"><i style="width:' + (j.pct || 0) + '%"></i></div><div class="muted">Bu sırada diğer ekranları kullanabilirsiniz.</div></div>';
@@ -706,7 +813,7 @@
       var open = st.jobOpen === j.id;
       if (j.cert) {
         var pg = j.pages || [];
-        return '<div class="card job"><h3>Kontrol: ' + esc(j.name) + '</h3><div class="muted">' + esc(j.supplier) + '</div>' +
+        return '<div class="card job"><h3>Kontrol: ' + esc(j.name) + '</h3><div class="muted">' + who + '</div>' +
           '<div class="internal">' + (j.reason ? esc(j.reason) + ' İsterseniz ' : 'Bu belge sertifika / onay yazısı olarak tanındı. Ürün okunmadı; ') + pg.length + ' sayfa belge olarak saklanacak ve Belgeler listesinden açılabilecek.</div>' +
           (open && pg[0] ? '<img class="certprev" alt="" src="' + pg[0] + '">' : '') +
           '<div class="row"><button class="primary" data-act="save" data-id="' + j.id + '">Belge olarak kaydet</button>' +
@@ -716,7 +823,7 @@
       }
       var rp = j.report || {}, warn = Object.keys(rp.warns || {}).reduce(function (a, k) { return a + rp.warns[k]; }, 0);
       return '<div class="card job"><h3>Kontrol: ' + esc(j.name) + '</h3>' +
-        '<div class="muted">' + esc(j.supplier) + ' · ' + (rp.products || 0) + ' ürün, ' + j.rows.length + ' satır okundu. ' + (rp.withImg || 0) + ' ürüne resim bulundu, ' + warn + ' satır kontrol gerektiriyor.</div>' +
+        '<div class="muted">' + who + ' · ' + (rp.products || 0) + ' ürün, ' + j.rows.length + ' satır okundu. ' + (rp.withImg || 0) + ' ürüne resim bulundu, ' + warn + ' satır kontrol gerektiriyor.</div>' +
         (j.note ? '<div class="internal">' + esc(j.note) + '</div>' : '') +
         (open ? '<div class="report">' + reportHtml(j.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="' + j.id + '">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="' + j.id + '">Kopyala</button></div></div>' +
           '<div class="scroll"><table><tr><th></th><th>Ürün</th><th>Kod</th><th>Ölçü</th><th>Fiyat</th><th>Not</th></tr>' +
@@ -755,11 +862,12 @@
   // - Aynı tedarikçi + aynı ürün adı: aynı ürün kartına yeni varyant (ölçü/kod) olarak ekler
   // - Yeni ürün: yeni kart oluşturur
   function commit(d) {
-    var rows = d.rows, supplier = d.supplier, kind = d.kind, docName = d.name, docId = d.docId;
+    var rows = d.rows, supplier = d.supplier, brand = d.brand || d.supplier, kind = d.kind, docName = d.name, docId = d.docId;
+    profileFill(brand, supplier, kind, d.contact);
     var res = { created: 0, updated: 0, changed: 0, pending: 0 };
     if (d.cert) {
       kvPut('pages:' + docId, d.pages);
-      db.docs.push({ id: docId, name: docName, supplier: supplier, kind: 'sertifika', date: today(), count: d.pages.length, fp: d.fp || '' });
+      db.docs.push({ id: docId, name: docName, supplier: supplier, kind: 'sertifika', date: today(), count: d.pages.length, fp: d.fp || '', brand: brand });
       save(); res.cert = true; return res;
     }
     // Hızlı eşleştirme için dizinler (her satırda bütün kayıtları taramamak için)
@@ -770,14 +878,23 @@
       else { var nk = o.itemId + '|' + fold(o.size); if (!noKey[nk]) noKey[nk] = o; }
     });
     Object.values(db.items).forEach(function (it) {
-      if (it.brand !== supplier) return;
+      if (it.brand !== brand) return;
       var k = fold(it.name) + '|' + fold(it.sub); if (!byName[k]) byName[k] = it;
+    });
+    // Aynı markanın ürünü başka satıcıdan gelirse aynı karta eklenir: marka + kod eşleşmesi.
+    // Fiyat listesinde marka bilinmiyorsa kod bütün markalarda aranır; tek ürüne denk geliyorsa o karta eklenir.
+    var brandKey = {}, anyKey = {};
+    Object.values(db.offers).forEach(function (o) {
+      var it = db.items[o.itemId]; if (!o.key || !it) return;
+      if (it.brand === brand && !brandKey[o.key]) brandKey[o.key] = it;
+      if (!(o.key in anyKey)) anyKey[o.key] = it; else if (anyKey[o.key] !== it) anyKey[o.key] = null;
     });
     rows.forEach(function (r) {
       var key = codeKey(r.code);
       var off = key ? (byKey[key] || null) : null;
       var nm = fold(r.name), sb = fold(r.sub);
-      var item = off ? db.items[off.itemId] : (nm ? (byName[nm + '|' + sb] || null) : null);
+      var known = !off && key ? (brandKey[key] || (kind === 'fiyat' ? anyKey[key] : null) || null) : null;
+      var item = off ? db.items[off.itemId] : (known || (nm ? (byName[nm + '|' + sb] || null) : null));
       // Kodu olmayan fiyat listeleri: aynı ürün + aynı ölçü aynı tekliftir
       if (!off && !key && item) off = noKey[item.id + '|' + fold(r.size)] || null;
       if (off) {
@@ -797,9 +914,10 @@
         if (r.img) attachImg(db.items[off.itemId], r.img);
         return;
       }
-      var pendingFlag = kind === 'fiyat' && !!key;
+      var pendingFlag = kind === 'fiyat' && !!key && !known;
       if (!item) {
-        item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', sub: r.sub || '', brand: supplier, category: '', note: '', verified: false, hasImg: false };
+        item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', sub: r.sub || '', brand: brand, category: '', catBy: 'auto', note: '', verified: false, hasImg: false };
+        item.category = classify(item.name, item.sub);
         db.items[item.id] = item;
         if (nm) byName[nm + '|' + sb] = item;
       }
@@ -808,13 +926,21 @@
         listPrice: r.price, priceVat: r.priceVat == null ? null : r.priceVat, cur: r.cur || 'TL', supDisc: 0, sellPrice: r.price, lastDir: null,
         status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), why: r.warn || '', updated: today(), docId: docId };
       db.offers[o.id] = o; res.created++;
-      if (key) byKey[key] = o; else noKey[item.id + '|' + fold(o.size)] = o;
+      if (key) { byKey[key] = o; if (!brandKey[key]) brandKey[key] = item; } else noKey[item.id + '|' + fold(o.size)] = o;
       if (pendingFlag) res.pending++;
     });
     if (d.images && d.images.length) kvPut('doc:' + docId, d.images.map(function (im) { return { page: im.page, url: im.url }; }));
-    db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length, report: d.report || null, fp: d.fp || '' });
+    db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length, report: d.report || null, fp: d.fp || '', brand: brand });
     save();
     return res;
+  }
+  // Marka ve satıcı kartlarını oluştur; belgeden bulunan iletişim bilgileriyle boş alanları doldur.
+  // Ana katalogdaki bilgiler markaya, fiyat listesindekiler satıcıya aittir.
+  function profileFill(brand, supplier, kind, contact) {
+    var bp = db.brands[brand] = db.brands[brand] || {}, sp = db.sellers[supplier] = db.sellers[supplier] || {};
+    if (!contact) return;
+    var tgt = brand === supplier ? [bp, sp] : (kind === 'fiyat' ? [sp] : [bp]);
+    tgt.forEach(function (t) { ['web', 'email', 'phone'].forEach(function (f) { var v = topOf(contact[f]); if (!t[f] && v) { t[f] = v; t.auto = true; } }); });
   }
   function attachImg(item, url) {
     if (!item || item.hasImg) return;
@@ -833,14 +959,24 @@
   }
 
   // ---------- Arama ----------
+  // Ürünün aranabilir metni (ad, açıklama, marka, kategori, kodlar, ölçüler, özellikler, satıcılar)
+  var sIdx = {};
+  function searchText(it) {
+    if (sIdx[it.id] == null) {
+      sIdx[it.id] = fold([it.name, it.sub, it.brand, catName(it.category)].concat(offersOf(it.id).map(function (o) { return [o.code, o.size, o.specs, o.supplier].join(' '); })).join(' '));
+    }
+    return sIdx[it.id];
+  }
+  // Arama: tam ifade, kod (yazım farkına dayanıklı) ya da tarif.
+  // Tarifte her sözcük ayrı aranır; Türkçe - İngilizce eş anlamlılar da sayılır ("paslanmaz küresel vana 1/2").
   function matchItem(it, q) {
     if (!q) return true;
-    var offs = offersOf(it.id);
-    if (fold(it.name + ' ' + (it.sub || '') + ' ' + it.brand + ' ' + it.category).indexOf(fold(q)) >= 0) return true;
+    var txt = searchText(it), fq = fold(q);
+    if (txt.indexOf(fq) >= 0) return true;
     var qk = codeKey(q), qc = confKey(q);
-    return offs.some(function (o) {
-      return (qk && codeKey(o.code).indexOf(qk) >= 0) || (qc && confKey(o.code).indexOf(qc) >= 0) || fold(o.supplier).indexOf(fold(q)) >= 0;
-    });
+    if (offersOf(it.id).some(function (o) { return (qk && codeKey(o.code).indexOf(qk) >= 0) || (qc && confKey(o.code).indexOf(qc) >= 0); })) return true;
+    var toks = fq.split(' ').filter(Boolean);
+    return toks.length > 1 || (toks.length === 1 && synOf(toks[0]).length > 1) ? toks.every(function (t) { return synOf(t).some(function (x) { return txt.indexOf(x) >= 0; }); }) : false;
   }
   function passFilter(it) {
     var offs = offersOf(it.id);
@@ -892,27 +1028,70 @@
       '<div class="price">' + (best ? (offs.length > 1 ? 'Başlangıç ' : '') + fmtC(best.sellPrice, best.cur) : 'Fiyat yok') + '</div>' +
       '<div>' + badgesOf(it, offs) + '</div></div></div>';
   }
+  // Gruplama: kategori, marka, satıcı ya da belgeye göre. Bir ürün birden çok satıcı / belge grubunda olabilir.
+  var DIMS = [['kat', 'Kategori'], ['marka', 'Marka'], ['satici', 'Satıcı'], ['belge', 'Belge']];
+  function groupsOf(it) {
+    if (st.dim === 'kat') return [it.category || ''];
+    if (st.dim === 'marka') return [it.brand || ''];
+    var o = {}; offersOf(it.id).forEach(function (x) { o[st.dim === 'satici' ? (x.supplier || '') : (x.docId || '')] = 1; });
+    return Object.keys(o);
+  }
+  function groupLabel(g) {
+    if (st.dim === 'kat') return catName(g);
+    if (st.dim === 'belge') { var d = db.docs.filter(function (x) { return x.id === g; })[0]; return d ? d.name : 'Elle eklenen'; }
+    return g || 'Belirsiz';
+  }
+  function profField(kind, name, f, label, val, type) {
+    return '<label>' + label + ' <input data-prof="' + kind + '|' + f + '" data-name="' + esc(name) + '"' + (type ? ' type="' + type + '"' : '') + ' value="' + esc(val == null ? '' : val) + '"></label>';
+  }
+  // Marka ya da satıcı kartı: bilgiler, belgeler ve karttan belge yükleme
+  function profileCard(kind, name) {
+    var isB = kind === 'marka', p = (isB ? db.brands[name] : db.sellers[name]) || {};
+    var docs = db.docs.filter(function (d) { return isB ? (d.brand || d.supplier) === name : d.supplier === name; });
+    var n = isB ? Object.values(db.items).filter(function (it) { return it.brand === name; }).length : Object.values(db.offers).filter(function (o) { return o.supplier === name; }).length;
+    return '<div class="card"><h2>' + esc(name) + '</h2><div class="muted">' + (isB ? 'Marka · ' + n + ' ürün' : 'Satıcı · ' + n + ' teklif') + ' · ' + docs.length + ' belge' +
+      (p.auto ? ' · iletişim bilgileri belgeden alındı, kontrol edin' : '') + '</div>' +
+      '<details class="prof"><summary>Bilgiler' + (p.web || p.phone ? ': ' + esc([p.web, p.phone].filter(Boolean).join(' · ')) : ' (dokunup doldurun)') + '</summary>' +
+      profField(kind, name, 'web', 'İnternet sitesi', p.web) + profField(kind, name, 'phone', 'Telefon', p.phone) + profField(kind, name, 'email', 'E-posta', p.email) +
+      (isB ? '' : profField(kind, name, 'disc', 'İskonto % (bu satıcının bütün tekliflerine uygulanır)', p.disc, 'number')) +
+      profField(kind, name, 'note', 'Not', p.note) + '</details>' +
+      (p.web ? '<a class="btnlike" target="_blank" rel="noopener" href="' + esc(/^https?:/.test(p.web) ? p.web : 'https://' + p.web) + '">Siteyi aç (internet gerekir)</a>' : '') +
+      (docs.length ? '<div class="muted">Belgeler: ' + docs.map(function (d) { return esc(d.name); }).join(' · ') + '</div>' : '') +
+      '<div class="row"><button class="primary" data-act="upfor" data-id="' + kind + '">Bu ' + (isB ? 'markaya' : 'satıcıya') + ' belge yükle</button></div></div>';
+  }
   function drawResults() {
     var q = st.q.trim();
-    var items = Object.values(db.items).filter(function (it) { return matchItem(it, q) && passFilter(it); })
+    var base = Object.values(db.items).filter(function (it) { return matchItem(it, q) && passFilter(it); });
+    var counts = {};
+    base.forEach(function (it) { groupsOf(it).forEach(function (g) { counts[g] = (counts[g] || 0) + 1; }); });
+    if (st.grp != null && !(st.grp in counts)) st.grp = null;
+    var keys = Object.keys(counts).sort(function (a, b) { return (a === '') - (b === '') || groupLabel(a).localeCompare(groupLabel(b), 'tr'); });
+    $('#groups').innerHTML = keys.length ? keys.map(function (g) {
+      return '<button class="chip' + (st.grp === g ? ' on' : '') + '" data-act="grp" data-id="' + esc(g) + '">' + esc(groupLabel(g)) + ' <small>' + counts[g] + '</small></button>';
+    }).join('') : '';
+    var items = (st.grp == null ? base : base.filter(function (it) { return groupsOf(it).indexOf(st.grp) >= 0; }))
       .sort(function (a, b) { return a.name.localeCompare(b.name, 'tr') || String(a.sub || '').localeCompare(String(b.sub || ''), 'tr'); });
+    $('#gcard').innerHTML = st.grp && (st.dim === 'marka' || st.dim === 'satici') ? profileCard(st.dim, st.grp) : '';
     $('#sugg').innerHTML = q ? suggestions(q) : '';
-    $('#results').innerHTML = items.length ? items.slice(0, 200).map(card).join('') :
-      '<p class="muted">' + (Object.keys(db.items).length ? 'Bu filtrede sonuç yok.' : 'Henüz ürün yok. Belge sekmesinden bir katalog yükleyin.') + '</p>';
+    $('#results').innerHTML = items.length ? items.slice(0, 200).map(card).join('') + (items.length > 200 ? '<p class="muted">' + items.length + ' üründen ilk 200 tanesi gösteriliyor. Daraltmak için arayın ya da bir grup seçin.</p>' : '') :
+      '<p class="muted">' + (Object.keys(db.items).length ? 'Sonuç yok.' : 'Henüz ürün yok. Belge sekmesinden bir katalog yükleyin.') + '</p>';
     hydrateImages($('#results'));
   }
 
   // ---------- Ekranlar ----------
-  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, jobOpen: null, catSupplier: '', catKind: 'katalog',
+  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, jobOpen: null, dim: 'kat', grp: null, catBrand: '', catSupplier: '', catKind: 'katalog',
     histOffer: null, edit: null, pick: false, pickList: [], docView: null, repDoc: null, open: {} };
   var FILTERS = [['hepsi', 'Tümü'], ['kontrol', 'Kontrol gerekli'], ['dogrulanmamis', 'Doğrulanmamış'], ['resimsiz', 'Resimsiz'], ['bekliyor', 'Bekleyen']];
 
   function viewSearch() {
-    return '<div class="card"><input type="search" id="q" placeholder="Ürün adı, kod veya marka" value="' + esc(st.q) + '">' +
+    return '<div class="card"><input type="search" id="q" placeholder="Ürün, kod, marka ya da tarif" value="' + esc(st.q) + '">' +
+      '<div class="chips">' + DIMS.map(function (d) {
+        return '<button class="chip' + (st.dim === d[0] ? ' on' : '') + '" data-act="dim" data-id="' + d[0] + '">' + d[1] + '</button>';
+      }).join('') + '</div><div class="chips wrap" id="groups"></div>' +
       '<div class="chips">' + FILTERS.map(function (f) {
         return '<button class="chip' + (st.filter === f[0] ? ' on' : '') + '" data-act="filter" data-id="' + f[0] + '">' + f[1] + '</button>';
       }).join('') + '</div></div>' +
-      '<div id="sugg"></div><div id="results" style="display:flex;flex-direction:column;gap:10px"></div>';
+      '<div id="gcard"></div><div id="sugg"></div><div id="results" style="display:flex;flex-direction:column;gap:10px"></div>';
   }
   function statusBadge(o) {
     var s = '';
@@ -944,7 +1123,7 @@
     return '<div class="card editbox"><h3>Bilgileri düzelt</h3>' +
       '<label>Ürün adı <input id="e_name" value="' + esc(it.name) + '"></label>' +
       '<label>Açıklama (alt başlık) <input id="e_sub" value="' + esc(it.sub || '') + '"></label>' +
-      '<label>Marka / tedarikçi <input id="e_brand" value="' + esc(it.brand) + '"></label>' +
+      '<label>Marka <input id="e_brand" value="' + esc(it.brand) + '"></label>' +
       '<label>Kod <input id="e_code" value="' + esc(o.code) + '"></label>' +
       '<label>Ölçü <input id="e_size" value="' + esc(o.size) + '"></label>' +
       '<label>Liste fiyatı <input id="e_price" type="number" value="' + (o.listPrice == null ? '' : o.listPrice) + '"></label>' +
@@ -981,7 +1160,8 @@
     return '<button class="link" data-act="back">← Geri</button>' +
       '<div class="card detail">' + thumb(it, 'hero') +
       '<div><h2>' + esc(it.name) + '</h2>' + (it.sub ? '<div class="sub">' + esc(it.sub) + '</div>' : '') +
-      '<div class="muted">' + esc(it.brand) + (sel.code ? ' · kod ' + esc(sel.code) : '') + '</div></div>' +
+      '<div class="muted"><button class="link" data-act="gobrand" data-id="' + esc(it.brand) + '">' + esc(it.brand) + '</button>' + (sel.code ? ' · kod ' + esc(sel.code) : '') + '</div>' +
+      '<label class="catsel">Kategori <select data-cat="' + id + '"><option value="">Kategorisiz</option>' + CATS.map(function (c) { return '<option value="' + c[0] + '"' + (it.category === c[0] ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') + '</select></label></div>' +
       '<div>' + badgesOf(it, offs) + '</div>' + variants +
       (sel.sellPrice != null ? '<div class="bigprice">' + fmtC(sel.sellPrice, sel.cur) + ' <span class="muted">(öneri satış' + (sel.size ? ', ' + esc(sel.size) : '') + ')</span></div>' :
         '<div class="muted">Bu katalogda fiyat yok' + (sel.size ? ' · seçili ölçü ' + esc(sel.size) : '') + '. Fiyat listesi yüklenince ya da "Düzelt" ile eklenir.</div>') +
@@ -1029,7 +1209,10 @@
     }).join('');
     var h = '<div class="card"><h2>Belge yükle</h2>' +
       '<div class="muted">PDF, Excel (xlsx/xls), CSV veya TXT dosyası seçin; birden çok dosya seçebilirsiniz. Belgeler sırayla, arka planda okunur. Büyük belgeler kendiliğinden parça parça okunur. Okunan ürünleri kaydetmeden önce kontrol edersiniz. İnternet gerekmez.</div>' +
-      '<label>Tedarikçi / marka adı <input id="supName" value="' + esc(st.catSupplier) + '"></label>' +
+      '<label>Marka (ürünü üreten) <input id="brandName" list="brandList" value="' + esc(st.catBrand) + '" placeholder="örn. Boss Paslanmaz"></label>' +
+      '<label>Satıcı (fiyatı veren) <input id="supName" list="sellerList" value="' + esc(st.catSupplier) + '" placeholder="boş bırakılırsa marka ile aynı"></label>' +
+      '<datalist id="brandList">' + Array.from(new Set(brandNames().concat(SEED_BRANDS))).map(function (b) { return '<option value="' + esc(b) + '">'; }).join('') + '</datalist>' +
+      '<datalist id="sellerList">' + sellerNames().map(function (b) { return '<option value="' + esc(b) + '">'; }).join('') + '</datalist>' +
       '<label>Belge türü <select id="kind">' +
       '<option value="katalog"' + (st.catKind === 'katalog' ? ' selected' : '') + '>Ana katalog (resimli, detaylı)</option>' +
       '<option value="fiyat"' + (st.catKind === 'fiyat' ? ' selected' : '') + '>Fiyat listesi (kod ve fiyat)</option>' +
@@ -1144,34 +1327,34 @@
   var FB_SECS = [['ara', 'Arama'], ['urun', 'Ürün sayfası'], ['belge', 'Belge okuma'], ['sepet', 'Sepet ve teklif'], ['uyari', 'Uyarılar'], ['genel', 'Genel']];
   // Sürüm testi: markaya değil sistemin kendisine yönelik maddeler. Hangi belgeyle denendiği not kutusuna yazılır.
   var VTEST = [
-    ['Kurulum ve veri taşıma', [
-      ['k1', 'Yeni sürüm eskisinin üstüne kuruldu; eski ürünlerim, resimlerim ve ayarlarım duruyor'],
+    ['Kurulum', [
+      ['k1', 'Yeni sürüm eskisinin üstüne kuruldu; ürünlerim, resimlerim ve ayarlarım duruyor'],
       ['k2', 'Uygulama uçak modunda açılıyor ve belge okuyor'],
-      ['k3', 'Uygulamayı tamamen kapatıp açınca ürünler ve resimler duruyor']]],
-    ['Çoklu belge ve arka planda okuma', [
-      ['c1', 'Dosya seçicide birden çok belge seçebildim'],
-      ['c2', 'Dosya seçicide Google Drive göründü ve oradan belge seçebildim (internet varken)'],
-      ['c3', 'Belgeler sırayla okundu; okuma sürerken Ara, Sepet ve Ayarlar ekranlarını kullanabildim'],
-      ['c4', 'Üstteki durum şeridi okunan sayfayı gösterdi'],
-      ['c5', 'Okunan belgeler "Kontrol" kartı olarak bekledi; tek tek ya da hepsini birden kaydedebildim']]],
-    ['Büyük belge', [
-      ['g1', '10 MB üstü bir katalog çökmeden, kendiliğinden parça parça okundu'],
-      ['g2', 'Okuma sırasında uygulamayı kapattım; açınca "yarım kaldı" kartı çıktı ve aynı dosyayı seçince kaldığı sayfadan devam etti'],
-      ['g3', 'Okuma hızı önceki sürüme göre daha iyi (rapordaki süreyi nota yazın)'],
-      ['g4', 'Aynı belgeyi ikinci kez seçince uygulama uyardı']]],
-    ['Belge okuma doğruluğu', [
-      ['b1', 'Ürün adları, kodlar ve ölçüler önceki sürümdeki kadar doğru geldi'],
-      ['b2', 'Fiyatlar ve para birimi doğru geldi'],
-      ['b3', 'Resimler doğru ürüne bağlandı'],
-      ['b4', 'Sertifika / tanıtım belgesi ürün olarak okunmadı, belge olarak açılıyor']]],
-    ['Yedek', [
-      ['r1', 'Yedek indir: kayıt yeri penceresi açıldı ve dosya kaydedildi'],
-      ['r2', 'Yedekten yükle: önce onay sordu; onaylayınca ürünler ve resimler geri geldi'],
-      ['r3', 'Yedek olmayan bir dosya seçince veriler silinmedi, uyarı verdi']]],
-    ['Arayüz', [
-      ['a1', 'Geri tuşu açık ürünü kapatıyor, sonra Ara sekmesine dönüyor; uygulamadan birden çıkmıyor'],
-      ['a2', 'Çok ürün varken arama ve sayfalar takılmadan çalışıyor'],
-      ['a3', 'Kaydet düğmesine basınca büyük belge birkaç saniyede kaydedildi']]]
+      ['k3', 'Yeni uygulama simgesi ana ekranda görünüyor']]],
+    ['Belge okuma', [
+      ['c1', 'Dosya seçicide birden çok belge seçebildim; Google Drive da göründü'],
+      ['c2', 'Belgeler sırayla okundu; okuma sürerken diğer ekranları kullanabildim'],
+      ['c3', '10 MB üstü bir katalog çökmeden okundu'],
+      ['c4', 'Okuma yarıda kalınca aynı dosyayı seçtim, kaldığı sayfadan devam etti'],
+      ['c5', 'Ürün adları, kodlar, ölçüler, fiyatlar ve resimler doğru geldi'],
+      ['c6', 'Okuma hızı yeterli (rapordaki süreyi ve sayfa sayısını nota yazın)']]],
+    ['Kategori', [
+      ['t1', 'Ürünler kendiliğinden kategorilere ayrıldı; çoğu doğru yerde'],
+      ['t2', 'Ayrılamayanlar "Kategorisiz" grubunda göründü'],
+      ['t3', 'Ürün sayfasından kategoriyi elle değiştirdim; benzer ürünler de aynı kategoriye geçti']]],
+    ['Arama', [
+      ['s1', 'Ara ekranında Kategori / Marka / Satıcı / Belge gruplarına göre süzebildim'],
+      ['s2', 'Tarifle arama çalıştı (örn. "paslanmaz küresel vana" ya da İngilizce "ball valve")'],
+      ['s3', 'Çok ürün varken arama takılmadan çalışıyor']]],
+    ['Marka ve satıcı', [
+      ['m1', 'Belge yüklerken marka ve satıcıyı ayrı yazabildim; marka önerileri çıktı'],
+      ['m2', 'Marka kartı kendiliğinden oluştu; site / telefon belgeden doldu (doğruysa ✓)'],
+      ['m3', 'Marka kartındaki "belge yükle" düğmesi markayı hazır getirdi'],
+      ['m4', 'Aynı kodlu ürünün ikinci satıcıdan gelen fiyatı aynı ürün kartına eklendi'],
+      ['m5', 'Satıcı kartına yazdığım iskonto bütün tekliflerine uygulandı']]],
+    ['Yedek ve arayüz', [
+      ['r1', 'Yedek indir çalıştı; yedekten yükle önce onay sordu ve veriler geri geldi'],
+      ['a1', 'Geri tuşu açık sayfayı kapatıyor, uygulamadan birden çıkmıyor']]]
   ];
   function vt() {
     if (!db.vtest || db.vtest.ver !== APP_VERSION) db.vtest = { ver: APP_VERSION, marks: {}, notes: {}, gnotes: {} };
@@ -1347,12 +1530,13 @@
     });
   }
   function readDraft() {
-    var supplier = ($('#supName').value || '').trim(), kind = $('#kind').value, files = Array.prototype.slice.call($('#docFile').files || []);
-    if (!supplier) return toast('Önce tedarikçi adını yazın.');
+    var brand = ($('#brandName').value || '').trim(), supplier = ($('#supName').value || '').trim(), kind = $('#kind').value, files = Array.prototype.slice.call($('#docFile').files || []);
+    if (!brand && !supplier) return toast('Önce marka ya da satıcı adını yazın.');
+    if (!brand) brand = supplier; if (!supplier) supplier = brand;
     if (!files.length) return toast('Önce bir ya da birkaç belge seçin.');
-    st.catSupplier = supplier; st.catKind = kind;
+    st.catBrand = brand; st.catSupplier = supplier === brand ? '' : supplier; st.catKind = kind;
     $('#docFile').value = '';
-    enqueue(files, supplier, kind);
+    enqueue(files, brand, supplier, kind);
   }
   function jobById(id) { return jobs.filter(function (j) { return j.id === id; })[0]; }
   function saveMsg(r) {
@@ -1457,6 +1641,10 @@
     switch (el.dataset.act) {
       case 'back': st.item = null; st.edit = null; st.pick = false; render(); break;
       case 'filter': st.filter = id; render(); break;
+      case 'dim': st.dim = id; st.grp = null; render(true); break;
+      case 'grp': st.grp = st.grp === id ? null : id; drawResults(); break;
+      case 'gobrand': st.item = null; st.tab = 'ara'; st.q = ''; st.filter = 'hepsi'; st.dim = 'marka'; st.grp = id; render(); break;
+      case 'upfor': if (id === 'marka') { st.catBrand = st.grp; st.catSupplier = ''; } else { st.catSupplier = st.grp; st.catBrand = ''; st.catKind = 'fiyat'; } go('katalog'); break;
       case 'openitem': openItem(id); break;
       case 'variant': st.variant = id; st.edit = null; render(); break;
       case 'addcart': addCart(id); break;
@@ -1537,6 +1725,15 @@
     else if (d.disc) { var o2 = db.offers[d.disc]; if (o2) o2.supDisc = num(t.value); save(); if (st.item) render(); }
     else if (d.cur) { var o3 = db.offers[d.cur]; if (o3) o3.cur = t.value; save(); render(); }
     else if (d.note) { if (db.items[d.note]) db.items[d.note].note = t.value; save(); }
+    else if (d.cat) {
+      var ci = db.items[d.cat]; if (ci) { var cn = setCategory(ci, t.value); save(); toast(cn ? 'Kategori kaydedildi; benzer ' + cn + ' ürün de ayrıldı' : 'Kategori kaydedildi'); }
+    }
+    else if (d.prof) {
+      var pk = d.prof.split('|'), book = pk[0] === 'marka' ? db.brands : db.sellers, rec = book[d.name] = book[d.name] || {};
+      rec[pk[1]] = pk[1] === 'disc' ? num(t.value) : t.value.trim(); rec.auto = false;
+      if (pk[0] === 'satici' && pk[1] === 'disc') { Object.values(db.offers).forEach(function (o) { if (o.supplier === d.name) o.supDisc = rec.disc; }); toast('İskonto bu satıcının bütün tekliflerine uygulandı'); }
+      save();
+    }
     else if (d.qty) { var l = db.cart.find(function (x) { return x.offerId === d.qty; }); if (l) l.qty = Math.max(1, Math.round(num(t.value)) || 1); save(); render(); }
     else if (d.ldisc) { var l2 = db.cart.find(function (x) { return x.offerId === d.ldisc; }); if (l2) l2.disc = num(t.value); save(); render(); }
     else if (t.id === 'cartDisc') { db.cartDiscount = num(t.value); save(); render(); }
@@ -1574,6 +1771,9 @@
       else if (old) { try { localStorage.setItem('klavuz.tasindi', today()); } catch (e) {} }
     } catch (e) { storeMode = 'ls'; db = normalize(old); saveBad = false; }
     touch();
+    var cn = 0;
+    Object.values(db.items).forEach(function (it) { if (!it.category && it.catBy !== 'user') { var c = classify(it.name, it.sub); if (c) { it.category = c; it.catBy = 'auto'; cn++; } } });
+    if (cn) save();
     await loadJobs();
     window.KlavuzHazir = true;
     render();

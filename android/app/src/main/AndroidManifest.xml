@@ -5,6 +5,8 @@
 
     <application
         android:allowBackup="false"
+        android:icon="@drawable/ic_klavuz"
+        android:roundIcon="@drawable/ic_klavuz"
         android:label="Klavuz"
         android:supportsRtl="true"
         android:usesCleartextTraffic="false">

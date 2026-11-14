@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-9862a3e5-483rrf` dalı (sürüm 0.4.0; `ccr-2f65d271-hbxt5y` üzerine kuruldu)
+- Güncel çalışma: `ccr-9862a3e5-483rrf` dalı (sürüm 0.5.0; `ccr-2f65d271-hbxt5y` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -111,3 +111,15 @@ Dal notu: 0.2.0 çalışması `ccr-2f65d271-hbxt5y` dalında yapıldı (`ilk-sur
 - **Simge:** üç seçenek `simge/` klasöründe; kullanıcı seçince `icon.svg` ve Android başlatıcı simgesi yapılacak.
 
 Telefonda doğrulanmadı (0.4.0): WebView'da arka plan iş parçacığı (Ayarlar > Uygulama bilgileri'nde "okuma motoru" yazar), Drive'dan seçilen büyük dosyanın parça parça okunması, parçalı yedek yazma, geri tuşu.
+
+## Sürüm 0.5.0 ekleri (marka, satıcı, kategori)
+
+Kullanıcı kararı (14.11.2026): **seçim sorulmasın; gerekli seçim ve kararları Claude versin, ince ayar kullandıkça yapılır, öncelik verimli uygulama.** Bu yüzden simge de Claude tarafından seçildi (seçenek 2: katalog + büyüteç).
+
+- **Marka ve satıcı ayrı:** `item.brand` = marka, `offer.supplier` = satıcı. Belge yüklerken iki ayrı alan; satıcı boşsa marka ile aynı sayılır. Kartlar `db.brands[ad]` ve `db.sellers[ad]` içinde (web, telefon, e-posta, not; satıcıda iskonto). Kart ilk belgede kendiliğinden oluşur; site / telefon / e-posta belgeden bulunup boş alanlara yazılır (`scanContacts`, `profileFill`).
+- **Tek kart, çok satıcı:** `commit` aynı marka + aynı kodu başka satıcıdan görürse yeni ürün açmaz, mevcut karta teklif ekler. Fiyat listesinde marka bilinmiyorsa kod bütün markalarda aranır; tek ürüne denk gelirse ona bağlanır.
+- **Kategori:** `CATS` (22 grup, anahtar sözcüklerle). `classify` ürünü adından ayırır; ayıramadığı "Kategorisiz" kalır. Elle atama `setCategory` ile öğrenilir (`db.learn`) ve elle atanmamış benzer ürünlere uygulanır. Eski ürünler açılışta bir kez ayrılır.
+- **Arama:** Kategori / Marka / Satıcı / Belge grupları (sayılarıyla), marka ve satıcı kartı, karttan belge yükleme. Tarifle arama: her sözcük ayrı aranır, Türkçe–İngilizce eş anlamlılar (`SYN`) sayılır.
+- **Simge:** `icon.svg` ve Android başlatıcı simgesi (`res/drawable/ic_klavuz*.xml`).
+
+Sıradaki iş (0.6.0): okunamayan düzenler — ters tablo (Rushwarm), kodsuz özellik kartı (Asmarine), çift fiyat sütunlu kodsuz liste (Eser Pompa), sonra OCR. Ardından 0.7.0: karşılaştırma ekranı, ekran düzeni, isteğe bağlı Drive bağlantısı.

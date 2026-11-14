@@ -2,7 +2,8 @@
 
 > **Güncel durum (0.4.0):** İnceleme yapıldı, plan kullanıcıca onaylandı. 0.4.0 ile şu istekler karşılandı: 1 (çoklu belge), 2 (arka planda okuma), 3 (kendiliğinden parçalama), 4 (hız, kısmen), IndexedDB'ye taşıma, geri tuşu, 5'in ilk adımı (dosya seçicide Drive). Ayrıntı `DEVIR.md` sonunda.
 > **Onaylanan sıra:** 0.5.0 marka / satıcı / kategori (Drive'daki `05_MARKA_PROFILLERI` altında 50 marka klasörü var; marka listesi bu adlarla başlatılabilir) → 0.6.0 okunamayan düzenler (ters tablo, kodsuz özellik kartı, çift fiyat sütunlu kodsuz liste örn. Eser Pompa, OCR) → 0.7.0 görünüm, karşılaştırma, tarifle arama, isteğe bağlı Drive bağlantısı.
-> **Bekleyen kullanıcı kararı:** uygulama simgesi (`simge/` altındaki üç seçenekten biri) ve 0.4.0 telefon denemesi.
+> **0.5.0 ile karşılanan istekler:** 7, 9, 10, 11 (marka / satıcı kartları, karttan yükleme, tek kartta çok satıcı), 8'in elle giriş kısmı, 12–15 (kategorili arama, otomatik kategori, öğrenme, tarifle arama), 16 (simge).
+> **Çalışma kuralı değişti:** kullanıcı seçim yapmak istemiyor; kararları Claude verir, kullanıcı yalnız telefonda dener. Bekleyen: 0.5.0 telefon denemesi.
 
 Bu dosya, 0.3.0 sonrasında işi devralan oturum içindir. Teknik geçmiş `DEVIR.md` dosyasındadır; önce onu, sonra bunu okuyun.
 

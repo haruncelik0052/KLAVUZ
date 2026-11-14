@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Uygulama simgesi ön planı: açık katalog ve büyüteç. Uyarlanır simgede güvenli alana sığması için küçültülmüştür. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="512" android:viewportHeight="512">
+    <group android:pivotX="256" android:pivotY="256" android:scaleX="0.78" android:scaleY="0.78">
+        <path android:fillColor="#FFFFFF" android:pathData="M120,150c46,-22 92,-22 136,0v230c-44,-22 -90,-22 -136,0z" />
+        <path android:fillColor="#BAE6FD" android:pathData="M392,150c-46,-22 -92,-22 -136,0v230c44,-22 90,-22 136,0z" />
+        <path android:strokeColor="#0F2A4A" android:strokeWidth="20" android:pathData="M284,250a46,46 0 1,0 92,0a46,46 0 1,0 -92,0" />
+        <path android:strokeColor="#0F2A4A" android:strokeWidth="22" android:strokeLineCap="round" android:pathData="M364,286l40,42" />
+    </group>
+</vector>
