@@ -47,6 +47,11 @@ Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (
 ### 4. Drive'daki öbür kataloglar
 `05_MARKA_PROFILLERI` altında yaklaşık 50 marka klasörü var. Katalogları tek tek indirip (10 MB altı) okuyucudan geçir, okunamayan düzenleri çıkar, en çok ürün kazandıranı önce düzelt. Her değişiklikte Boss, Asel, Elif Depo, GS Marine Valve, Rushwarm, Asmarine, Eser Pompa çıktısı öncekiyle karşılaştırılır.
 
+### 4b. Klavuz'dan PDF katalog / fiyat listesi üretme (kullanıcının getirdiği Gemini önerisinden alınan fikir)
+- Seçilen ürünlerden (marka, kategori, sepet ya da arama sonucu) HC MARIN WORKS başlıklı, resimli PDF katalog veya fiyat listesi. Müşteri çıktısında yalnız satış fiyatı (alış ve kâr görünmez). Telefonda, internetsiz: HTML sayfa düzeni + Android yazdırma (`WebView.createPrintDocumentAdapter`, "PDF olarak kaydet"); web'de `window.print()`.
+- Logo yalnız kullanıcının verdiği firma logosu (Ada profilindeki JPEG); yeni logo çizilmez.
+- Gemini'nin önerdiği bilgisayarda Python + Claude API ile okuma **uygulamaya alınmadı**: internet ve ücretli API anahtarı ister, temel ilkeye (her iş internetsiz) aykırı. İleride yalnız isteğe bağlı ek olabilir: OCR'ın da okuyamadığı tek bir sayfayı, kullanıcı düğmeye basınca yapay zekâya gönderip sonucu yine "kontrol edin" uyarısıyla almak.
+
 ### 5. Daha sonra
 - TeklifX içe aktarma biçimi öğrenilince teklif dosyasını (`cartCsv`) ona uydurma.
 - Tablette iki bölmeli düzen (solda liste, sağda ürün).
