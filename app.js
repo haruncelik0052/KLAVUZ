@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.5.0';
+  var APP_VERSION = '0.6.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -59,10 +59,10 @@
   function openDb() {
     return new Promise(function (res, rej) {
       if (!window.indexedDB) return rej(new Error('no indexeddb'));
-      var r = indexedDB.open('klavuz-img', 2);
+      var r = indexedDB.open('klavuz-img', 3);
       r.onupgradeneeded = function () {
         var d = r.result;
-        ['img', 'data', 'draft'].forEach(function (n) { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); });
+        ['img', 'data', 'draft', 'file'].forEach(function (n) { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); });
       };
       r.onsuccess = function () { idb = r.result; res(idb); };
       r.onerror = function () { rej(r.error); };
@@ -82,6 +82,16 @@
         var tx = idb.transaction(store, 'readwrite'); tx.objectStore(store).put(v, k);
         tx.oncomplete = function () { res(true); }; tx.onerror = tx.onabort = function () { res(false); };
       } catch (e) { res(false); }
+    });
+  }
+  function storeGet(store, k) {
+    return new Promise(function (res) {
+      if (!idb) return res(null);
+      try {
+        var rq = idb.transaction(store).objectStore(store).get(k);
+        rq.onsuccess = function () { res(rq.result === undefined ? null : rq.result); };
+        rq.onerror = function () { res(null); };
+      } catch (e) { res(null); }
     });
   }
   function storeDel(store, k) { if (idb) try { idb.transaction(store, 'readwrite').objectStore(store).delete(k); } catch (e) {} }
@@ -256,10 +266,14 @@
     if (!Object.keys(score).length) {
       nameToks.forEach(function (t, i) { var lv = L.tok[t]; if (lv) Object.keys(lv).forEach(function (c) { add(c, lv[c], i); }); });
     }
-    var best = '';
+    var best = '', second = '';
     Object.keys(score).forEach(function (c) { if (!best || score[c] > score[best] || (score[c] === score[best] && first[c] < first[best])) best = c; });
+    // İkinci kategori: ürün iki gruba da giriyorsa (örn. "hortum kelepçesi" -> Kelepçe ve Hortum) ikisinde de görünür
+    Object.keys(score).forEach(function (c) { if (c !== best && score[c] >= 4 && (!second || score[c] > score[second])) second = c; });
+    classify.second = second;
     return best;
   }
+  function autoCat(it) { it.category = classify(it.name, it.sub); it.cat2 = it.category ? classify.second : ''; it.catBy = 'auto'; }
   // Elle atanan kategoriyi öğren ve henüz elle atanmamış benzer ürünlere uygula.
   function setCategory(it, cat) {
     it.category = cat; it.catBy = 'user';
@@ -272,7 +286,7 @@
     } else delete L.name[fn];
     Object.values(db.items).forEach(function (x) {
       if (x === it || x.catBy === 'user') return;
-      var c = classify(x.name, x.sub); if (c && c !== x.category) { x.category = c; x.catBy = 'auto'; n++; }
+      var c = classify(x.name, x.sub); if (c && c !== x.category) { x.category = c; x.cat2 = classify.second; x.catBy = 'auto'; n++; }
     });
     return n;
   }
@@ -510,7 +524,10 @@
     }
     res.tables.forEach(function (t) {
       // Kodu da fiyatı da olmayan tablo ürün değil, bilgi tablosudur (malzeme özellikleri, basınç çizelgesi vb.)
-      if (!t.hasCode && !t.hasPrice) { stat.infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
+      // Ancak adı, resmi ve satırlarının çoğunda ölçüsü varsa ürün sayılır: fiyatsız / kodsuz kataloglar da kart olur.
+      var sized = t.rows.filter(function (r) { return r.size; }).length;
+      var plain = !t.hasCode && !t.hasPrice;
+      if (plain && !(t.name && !t.guess && (t.imgs || []).length && sized >= Math.max(1, t.rows.length * 0.6))) { stat.infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
       stat.tableCount++;
       // Resim: adaylar içinde fotoğrafı teknik çizime tercih et (çizim çoğunlukla beyazdır)
       var pick = null;
@@ -522,7 +539,8 @@
         else if (t.guess) warn = 'ürün adı tahmin edildi';
         else if (t.hasCode && !r.code) warn = 'kod okunamadı';
         else if (t.hasPrice && r.price == null) warn = 'fiyat okunamadı';
-        else if (!r.size && !r.code) warn = 'ölçü okunamadı';
+        else if (!r.size && !r.code) warn = plain ? null : 'ölçü okunamadı';
+        if (plain && !r.size) return;
         rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '',
           size: (r.size + (r.variant ? ' · ' + r.variant : '')).trim(), price: r.price, cur: r.cur,
           priceVat: r.priceVat, specs: r.specs, img: pick != null ? urls[pick] : null, page: p, warn: warn });
@@ -687,7 +705,7 @@
   function newStat() { return { textLength: 0, tableCount: 0, emptyPages: 0, infoTables: [], pageCount: 0, secs: 0, engine: '' }; }
   function jobMeta(j) {
     return { id: j.id, docId: j.docId, name: j.name, fp: j.fp, supplier: j.supplier, brand: j.brand || j.supplier, kind: j.kind, force: !!j.force, status: j.status,
-      next: j.next, chunks: j.chunks, stat: j.stat, cert: !!j.cert, reason: j.reason || '', note: j.note || '', report: j.report || null, err: j.err || '' };
+      next: j.next, chunks: j.chunks, stat: j.stat, cert: !!j.cert, reason: j.reason || '', note: j.note || '', report: j.report || null, err: j.err || '', replaces: j.replaces || '', auto: !!j.auto };
   }
   function saveJob(j) { return storePut('draft', 'job:' + j.id, jobMeta(j)); }
   function dropJob(j) {
@@ -741,10 +759,11 @@
       if (same && same.status === 'partial') { same.file = file; same.status = 'wait'; same.prog = 'Kaldığı yerden devam edecek (sayfa ' + same.next + ')'; continue; }
       if (same && same.status === 'error') dropJob(same);
       else if (same) { toast(file.name + ' zaten sırada'); continue; }
+      // Daha önce yüklenmiş belge yeniden seçilirse soru sorulmaz: yeni becerilerle baştan okunur ve eski okumanın yerine geçer.
       var dup = db.docs.filter(function (d) { return d.fp ? d.fp === fp : d.name === file.name; })[0];
-      if (dup && !confirm('"' + file.name + '" daha önce yüklenmiş (' + dup.date + ', ' + dup.supplier + ').\nYeniden okunsun mu? Fiyatı değişen ürünler güncellenir.')) continue;
-      jobs.push({ id: uid(), docId: uid(), name: file.name, fp: fp, file: file, supplier: supplier, brand: brand, kind: kind, force: false, status: 'wait',
-        next: 1, chunks: 0, stat: newStat(), rows: [], images: [], pages: null, prog: '' });
+      jobs.push({ id: uid(), docId: uid(), name: file.name, fp: fp, file: file, supplier: dup ? dup.supplier : supplier, brand: dup ? (dup.brand || dup.supplier) : brand,
+        kind: dup && dup.kind !== 'sertifika' ? dup.kind : kind, force: false, status: 'wait',
+        next: 1, chunks: 0, stat: newStat(), rows: [], images: [], pages: null, prog: dup ? 'Yeniden okunacak' : '', replaces: dup ? dup.id : '', auto: !!dup });
     }
     drawJobs(); pump();
   }
@@ -759,7 +778,12 @@
       else { j.status = 'error'; j.err = (err && err.message) || String(err); await saveJob(j); }
     }
     running = false;
-    if (j && j.status === 'ready') toast('Okundu: ' + j.name + '. Belge sekmesinde kontrol edip kaydedin.');
+    if (j && j.status === 'ready') {
+      var oldDoc = j.replaces && db.docs.filter(function (x) { return x.id === j.replaces; })[0];
+      // Yeniden okuma kendiliğinden kaydedilir. Tek istisna: eskiden ürün okunan belgeden bu kez ürün çıkmadıysa karar kullanıcıya kalır.
+      if (j.auto && !(j.cert && oldDoc && oldDoc.kind !== 'sertifika')) { var rr = saveJobDraft(j); toast('Yeniden okundu: ' + j.name + ' · ' + (rr.cert ? 'belge' : rr.created + ' yeni, ' + rr.updated + ' güncellendi')); if (st.tab === 'katalog' && !st.item) render(true); }
+      else toast('Okundu: ' + j.name + '. Belge sekmesinde kontrol edip kaydedin.');
+    }
     drawJobs(); pump();
   }
   async function runJob(j) {
@@ -795,8 +819,14 @@
     await saveJob(j);
   }
   function saveJobDraft(j) {
-    var r = commit({ rows: j.rows, images: j.images, pages: j.pages, cert: j.cert, supplier: j.supplier, brand: j.brand || j.supplier, contact: j.stat && j.stat.contact, kind: j.cert ? 'sertifika' : j.kind,
-      name: j.name, docId: j.docId, report: j.report, fp: j.fp });
+    var r = { rows: j.rows, images: j.images, pages: j.pages, cert: j.cert, supplier: j.supplier, brand: j.brand || j.supplier, contact: j.stat && j.stat.contact, kind: j.cert ? 'sertifika' : j.kind,
+      name: j.name, docId: j.docId, report: j.report, fp: j.fp }, old = j.replaces && db.docs.some(function (x) { return x.id === j.replaces; }) ? j.replaces : '';
+    r = old ? recommit(r, old) : commit(r);
+    // Belgenin aslını sakla: sonraki sürümlerde dosyayı yeniden seçmeden baştan okunabilsin
+    var doc = db.docs.filter(function (x) { return x.id === j.docId; })[0];
+    if (doc && j.file && j.file.size <= KEEP_MAX && idb) { doc.hasFile = true; storePut('file', j.docId, j.file).then(function (ok) { if (!ok) { doc.hasFile = false; save(); } }); }
+    if (!r.cert) { var ac = autoCheck(); r.fixed = ac.fixed; r.ver = ac.ver; }
+    save();
     dropJob(j);
     return r;
   }
@@ -855,6 +885,94 @@
     // Okuma sürerken yalnız ilerleme satırı değişir; açık ayrıntı tablosu yeniden çizilmez
     if (light && st.jobOpen) { var b = el.querySelector('.bar i'); if (b) { var r = jobs.filter(function (j) { return j.status === 'run'; })[0]; if (r) b.style.width = (r.pct || 0) + '%'; } return; }
     el.innerHTML = jobsHtml();
+  }
+
+  // ---------- Otomatik kontrol ----------
+  // Kontrol gerektiren kayıtları sistem kendisi ayıklar: nedeni ortadan kalkmış ya da başka bilgiyle
+  // doğrulanabilen uyarılar kapatılır; uyarısı kalmayan ürünler "otomatik doğrulandı" olur.
+  // Gerçekten belirsiz kalanlar (ad bulunamadı, kod ya da fiyat okunamadı) elle kontrole bırakılır.
+  function autoCheck() {
+    var docPrice = {}, docCode = {}, keyDocs = {}, fixed = 0, ver = 0;
+    Object.values(db.offers).forEach(function (o) {
+      if (o.listPrice != null) docPrice[o.docId] = true;
+      if (o.key) { docCode[o.docId] = true; (keyDocs[o.key] = keyDocs[o.key] || {})[o.supplier] = 1; }
+    });
+    Object.values(db.offers).forEach(function (o) {
+      if (o.status !== 'check') return;
+      var it = db.items[o.itemId]; if (!it) return;
+      var w = o.why || '', sib = offersOf(it.id), ok = false;
+      if (/iki kez/.test(w)) ok = true; // aynı kodlu satırlar kaydederken zaten tek teklifte birleşti
+      else if (/I\/L\/1/.test(w)) {
+        // Kodun başı aynı üründeki diğer kodlarla aynı kalıptaysa ya da kod başka satıcıda da geçiyorsa doğrudur
+        var pre = o.key.slice(0, 3);
+        ok = sib.filter(function (x) { return x !== o && x.key && x.key.slice(0, 3) === pre; }).length >= 2 || Object.keys(keyDocs[o.key] || {}).length > 1;
+      }
+      else if (/^fiyat yok/.test(w)) ok = !docPrice[o.docId]; // belgede hiç fiyat yok: fiyatsız katalog
+      else if (/^kod yok/.test(w)) ok = !docCode[o.docId] && !!it.name; // belgede hiç kod yok: kodsuz liste
+      else if (/tahmin edildi/.test(w)) ok = !!classify(it.name, it.sub); // tahmin edilen ad bilinen bir ürün türü
+      else if (/ölçü okunamadı/.test(w)) ok = sib.length === 1;
+      else if (!w) ok = !!o.key && it.name.length >= 3; // eski sürümden kalan, nedeni yazılmamış uyarı
+      if (ok) { o.status = 'ok'; o.autoFix = w || 'eski uyarı'; o.why = ''; fixed++; }
+    });
+    touch();
+    Object.values(db.items).forEach(function (it) {
+      if (it.verified) return;
+      var offs = offersOf(it.id);
+      if (offs.length && it.name && it.name.length >= 3 && !/^Adsız ürün/.test(it.name) && !offs.some(function (o) { return o.status === 'check'; })) { it.verified = true; it.autoVer = true; ver++; }
+    });
+    return { fixed: fixed, ver: ver };
+  }
+  // ---------- Belgeyi yeniden okuma ----------
+  // Yeni sürümün becerileriyle eski belge baştan okunur. Eski okumadan gelen kayıtlar yenileriyle değiştirilir;
+  // elle doğrulanan ürünler, özel satış fiyatı, iskonto, sepet, fiyat geçmişi, not ve elle atanan kategori korunur.
+  var KEEP_MAX = 25 * 1024 * 1024; // bundan küçük belgelerin aslı cihazda saklanır (yeniden okuma için)
+  function offerSig(o, it) { return o.supplier + '|' + (o.key || (fold(it ? it.name : '') + '|' + fold(o.size))); }
+  function recommit(d, oldId) {
+    var keep = {}, userItems = {};
+    Object.values(db.offers).forEach(function (o) {
+      if (o.docId !== oldId) return;
+      var it = db.items[o.itemId];
+      keep[offerSig(o, it)] = { id: o.id, sell: o.sellPrice !== o.listPrice ? o.sellPrice : undefined, disc: o.supDisc || 0,
+        note: it && it.note, cat: it && it.catBy === 'user' ? [it.category, it.cat2] : null, img: it && it.hasImg ? it.id : null };
+      if (it && it.verified && !it.autoVer) { userItems[it.id] = true; return; } // elle doğrulanan ürün olduğu gibi kalır, yalnız güncellenir
+      delete db.offers[o.id];
+    });
+    touch();
+    Object.keys(db.items).forEach(function (id) { if (!userItems[id] && !offersOf(id).length) { kvDel('item:' + id); delete db.items[id]; } });
+    db.docs = db.docs.filter(function (x) { return x.id !== oldId; });
+    kvDel('doc:' + oldId); kvDel('pages:' + oldId); storeDel('file', oldId);
+    touch();
+    var res = commit(d), map = {};
+    Object.values(db.offers).forEach(function (o) {
+      var it = db.items[o.itemId], k;
+      if (o.docId === oldId) { o.docId = d.docId; return; } // korunup yeni okumada bulunamayan teklif
+      if (o.docId !== d.docId || !(k = keep[offerSig(o, it)])) return;
+      map[k.id] = o.id;
+      if (k.sell !== undefined) o.sellPrice = k.sell;
+      if (k.disc) o.supDisc = k.disc;
+      if (it && k.note && !it.note) it.note = k.note;
+      if (it && k.cat) { it.category = k.cat[0]; it.cat2 = k.cat[1] || ''; it.catBy = 'user'; }
+    });
+    db.history.forEach(function (h) { if (map[h.offerId]) h.offerId = map[h.offerId]; });
+    db.cart.forEach(function (l) { if (map[l.offerId]) l.offerId = map[l.offerId]; });
+    db.cart = db.cart.filter(function (l) { return db.offers[l.offerId]; });
+    save();
+    return res;
+  }
+  // Aslı saklanan belgeleri sıraya koy (hepsi ya da biri)
+  async function reread(ids) {
+    var n = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var d = db.docs.filter(function (x) { return x.id === ids[i]; })[0]; if (!d || !d.hasFile) continue;
+      if (jobs.some(function (j) { return j.replaces === d.id; })) continue;
+      var blob = await storeGet('file', d.id); if (!blob) { d.hasFile = false; continue; }
+      var file; try { file = new File([blob], d.name, { type: blob.type }); } catch (e) { file = blob; file.name = d.name; }
+      jobs.push({ id: uid(), docId: uid(), name: d.name, fp: d.fp || '', file: file, supplier: d.supplier, brand: d.brand || d.supplier, kind: d.kind === 'sertifika' ? 'katalog' : d.kind,
+        force: false, status: 'wait', next: 1, chunks: 0, stat: newStat(), rows: [], images: [], pages: null, prog: 'Yeniden okunacak', replaces: d.id, auto: true });
+      n++;
+    }
+    toast(n ? n + ' belge yeniden okuma sırasına alındı' : 'Yeniden okunacak belge yok (aslı saklanan belge bulunamadı)');
+    drawJobs(); pump();
   }
 
   // Belgeyi veritabanına işle
@@ -917,7 +1035,7 @@
       var pendingFlag = kind === 'fiyat' && !!key && !known;
       if (!item) {
         item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', sub: r.sub || '', brand: brand, category: '', catBy: 'auto', note: '', verified: false, hasImg: false };
-        item.category = classify(item.name, item.sub);
+        autoCat(item);
         db.items[item.id] = item;
         if (nm) byName[nm + '|' + sb] = item;
       }
@@ -953,7 +1071,7 @@
       if (!offersOf(id).length) { kvDel('item:' + id); delete db.items[id]; }
     });
     db.docs = db.docs.filter(function (d) { return d.id !== docId; });
-    kvDel('doc:' + docId); kvDel('pages:' + docId);
+    kvDel('doc:' + docId); kvDel('pages:' + docId); storeDel('file', docId);
     db.cart = db.cart.filter(function (l) { return db.offers[l.offerId]; });
     save();
   }
@@ -963,7 +1081,7 @@
   var sIdx = {};
   function searchText(it) {
     if (sIdx[it.id] == null) {
-      sIdx[it.id] = fold([it.name, it.sub, it.brand, catName(it.category)].concat(offersOf(it.id).map(function (o) { return [o.code, o.size, o.specs, o.supplier].join(' '); })).join(' '));
+      sIdx[it.id] = fold([it.name, it.sub, it.brand, catName(it.category), it.cat2 ? catName(it.cat2) : ''].concat(offersOf(it.id).map(function (o) { return [o.code, o.size, o.specs, o.supplier].join(' '); })).join(' '));
     }
     return sIdx[it.id];
   }
@@ -1002,7 +1120,7 @@
   }
   function badgesOf(it, offs) {
     var b = '';
-    if (it.verified) b += '<span class="badge b-ok">✓ Doğrulandı</span>';
+    if (it.verified) b += '<span class="badge b-ok">' + (it.autoVer ? '✓ Otomatik doğrulandı' : '✓ Doğrulandı') + '</span>';
     else b += '<span class="badge b-gray">Doğrulanmadı</span>';
     if (offs.some(function (o) { return o.status === 'check'; })) b += '<span class="badge b-warn">Kontrol gerekli</span>';
     if (offs.some(function (o) { return o.status === 'pending'; })) b += '<span class="badge b-pend">Ana katalogda yok, bekliyor</span>';
@@ -1031,7 +1149,7 @@
   // Gruplama: kategori, marka, satıcı ya da belgeye göre. Bir ürün birden çok satıcı / belge grubunda olabilir.
   var DIMS = [['kat', 'Kategori'], ['marka', 'Marka'], ['satici', 'Satıcı'], ['belge', 'Belge']];
   function groupsOf(it) {
-    if (st.dim === 'kat') return [it.category || ''];
+    if (st.dim === 'kat') return it.cat2 && it.cat2 !== it.category ? [it.category || '', it.cat2] : [it.category || ''];
     if (st.dim === 'marka') return [it.brand || ''];
     var o = {}; offersOf(it.id).forEach(function (x) { o[st.dim === 'satici' ? (x.supplier || '') : (x.docId || '')] = 1; });
     return Object.keys(o);
@@ -1079,7 +1197,7 @@
   }
 
   // ---------- Ekranlar ----------
-  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, jobOpen: null, dim: 'kat', grp: null, catBrand: '', catSupplier: '', catKind: 'katalog',
+  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, jobOpen: null, newProd: null, dim: 'kat', grp: null, catBrand: '', catSupplier: '', catKind: 'katalog',
     histOffer: null, edit: null, pick: false, pickList: [], docView: null, repDoc: null, open: {} };
   var FILTERS = [['hepsi', 'Tümü'], ['kontrol', 'Kontrol gerekli'], ['dogrulanmamis', 'Doğrulanmamış'], ['resimsiz', 'Resimsiz'], ['bekliyor', 'Bekleyen']];
 
@@ -1135,6 +1253,96 @@
       '<div id="picker" class="pickgrid"><span class="muted">Yükleniyor...</span></div>' +
       '<div class="row"><button class="ghost" data-act="closepick">Kapat</button></div></div>';
   }
+  // Alternatifler: başka marka ya da satıcıdaki aynı tip ürünler (aynı kategori; ad ve ölçü benzerliğine göre sıralı)
+  function altItems(it, sel) {
+    if (!it.category) return [];
+    var tk = tokens(it.name), sz = sizeNum(sel && sel.size), out = [];
+    Object.values(db.items).forEach(function (x) {
+      if (x.id === it.id || (x.category !== it.category && x.cat2 !== it.category)) return;
+      var t2 = tokens(x.name), common = tk.filter(function (t) { return t2.indexOf(t) >= 0; }).length;
+      var offs = offersOf(x.id), score = tk.length ? common / Math.max(tk.length, t2.length, 1) : 0;
+      var same = sz != null ? offs.filter(function (o) { return sizeNum(o.size) === sz; })[0] : null;
+      if (same) score += 0.5;
+      if (x.brand !== it.brand) score += 0.1;
+      if (score < 0.4) return;
+      var show = same || offs.filter(function (o) { return o.sellPrice != null; }).sort(function (a, b) { return a.sellPrice - b.sellPrice; })[0] || offs[0];
+      if (show) out.push({ it: x, o: show, score: score, same: !!same });
+    });
+    return out.sort(function (a, b) { return b.score - a.score || (a.o.sellPrice || 1e12) - (b.o.sellPrice || 1e12); }).slice(0, 8);
+  }
+  function altHtml(it, sel) {
+    var list = altItems(it, sel); if (!list.length) return '';
+    return '<div class="card"><h3>Benzer ve alternatif ürünler</h3><div class="muted">Aynı tipte, başka marka ya da satıcıdan. Karşılaştırmak için dokunun.</div>' + list.map(function (a) {
+      return '<button class="altrow" data-act="openitem" data-id="' + a.it.id + '">' + thumb(a.it) + '<span><b>' + esc(a.it.name) + '</b><small>' + esc(a.it.brand) + (a.o.supplier !== a.it.brand ? ' · ' + esc(a.o.supplier) : '') +
+        (a.o.size ? ' · ' + esc(a.o.size) : '') + (a.same ? ' · aynı ölçü' : '') + '</small></span><b>' + (a.o.sellPrice != null ? fmtC(a.o.sellPrice, a.o.cur) : '—') + '</b></button>';
+    }).join('') + '</div>';
+  }
+  // Elle ya da internetten paylaşılan ürün: kısa bir formla tek ürün kartı eklenir
+  function newProdHtml() {
+    var n = st.newProd;
+    function f(k, label, type) { return '<label>' + label + ' <input data-np="' + k + '"' + (type ? ' type="' + type + '"' : '') + ' value="' + esc(n[k] == null ? '' : n[k]) + '"></label>'; }
+    return '<div class="card editbox" id="newprod"><h3>' + (n.link ? 'İnternetten paylaşılan ürün' : 'Elle ürün ekle') + '</h3>' +
+      (n.busy ? '<div class="muted">Sayfadan bilgiler alınıyor (internet varsa)...</div>' : '') +
+      (n.img ? '<img class="certprev" alt="" src="' + n.img + '">' : '') +
+      f('name', 'Ürün adı') + f('brand', 'Marka') + f('seller', 'Satıcı') + f('code', 'Kod (varsa)') + f('size', 'Ölçü (varsa)') + f('price', 'Fiyat (varsa)', 'number') +
+      '<label>Para birimi <select data-np="cur">' + ['TL', 'EUR', 'USD'].map(function (c) { return '<option' + ((n.cur || 'TL') === c ? ' selected' : '') + '>' + c + '</option>'; }).join('') + '</select></label>' +
+      (n.link ? '<div class="muted">Bağlantı: ' + esc(n.link.slice(0, 80)) + '</div>' : '') +
+      '<div class="row"><button class="primary" data-act="npsave">Ürünü ekle</button><button class="ghost" data-act="npcancel">Vazgeç</button></div></div>';
+  }
+  function saveNewProd() {
+    var n = st.newProd, name = (n.name || '').trim(); if (!name) return toast('Ürün adını yazın.');
+    var seller = (n.seller || '').trim() || (n.brand || '').trim() || 'Elle eklenen', brand = (n.brand || '').trim() || seller;
+    var price = n.price === '' || n.price == null ? null : num(n.price);
+    var item = { id: uid(), name: name, sub: '', brand: brand, category: '', note: '', verified: true, hasImg: false };
+    autoCat(item); db.items[item.id] = item;
+    if (n.img) attachImg(item, n.img);
+    var o = { id: uid(), itemId: item.id, supplier: seller, code: (n.code || '').trim(), key: codeKey(n.code), size: (n.size || '').trim(), specs: '', listPrice: price, priceVat: null,
+      cur: n.cur || 'TL', supDisc: 0, sellPrice: price, lastDir: null, status: 'ok', why: '', updated: today(), docId: '', link: n.link || '' };
+    db.offers[o.id] = o; profileFill(brand, seller, 'fiyat', null);
+    st.newProd = null; save(); toast('Ürün eklendi'); openItem(item.id);
+  }
+  // İnternet sitesinden (Amazon, Hepsiburada vb.) "paylaş" ile gelen metin: bağlantı ve ürün adı ayrılır.
+  // İnternet varsa sayfadan ad, fiyat ve resim alınmaya çalışılır; alınamazsa form elle doldurulur.
+  var SHOPS = [['amazon', 'Amazon'], ['hepsiburada', 'Hepsiburada'], ['trendyol', 'Trendyol'], ['n11', 'n11'], ['ciceksepeti', 'Çiçeksepeti'], ['akakce', 'Akakçe'], ['sahibinden', 'Sahibinden'], ['aliexpress', 'AliExpress'], ['ebay', 'eBay']];
+  function metaOf(html, names) {
+    for (var i = 0; i < names.length; i++) {
+      var m = html.match(new RegExp('<meta[^>]+(?:property|name|itemprop)=["\']' + names[i] + '["\'][^>]*content=["\']([^"\']+)["\']', 'i')) ||
+        html.match(new RegExp('<meta[^>]+content=["\']([^"\']+)["\'][^>]+(?:property|name|itemprop)=["\']' + names[i] + '["\']', 'i'));
+      if (m) return m[1].replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+    }
+    return '';
+  }
+  window.KlavuzShared = function (text) {
+    text = String(text || '').trim(); if (!text) return;
+    var m = text.match(/https?:\/\/\S+/), link = m ? m[0] : '', host = '';
+    try { host = link ? new URL(link).hostname.replace(/^www\./, '') : ''; } catch (e) { host = ''; }
+    var shop = SHOPS.filter(function (x) { return host.indexOf(x[0]) >= 0; })[0];
+    st.newProd = { name: text.replace(link, '').replace(/\s+/g, ' ').trim().slice(0, 140), link: link, seller: shop ? shop[1] : host, brand: '', code: '', size: '', price: '', cur: 'TL', img: '', busy: false };
+    st.item = null; st.docView = null; st.tab = 'katalog';
+    if (link && window.KlavuzAndroid && KlavuzAndroid.fetchText && navigator.onLine !== false) { st.newProd.busy = true; KlavuzAndroid.fetchText(link); }
+    render();
+    var el = $('#newprod'); if (el) el.scrollIntoView();
+  };
+  window.KlavuzPage = function (html) {
+    var n = st.newProd; if (!n) return;
+    n.busy = false;
+    if (html) {
+      var title = metaOf(html, ['og:title', 'twitter:title']) || ((html.match(/<title[^>]*>([^<]+)</i) || [])[1] || '').trim();
+      var price = metaOf(html, ['product:price:amount', 'og:price:amount', 'price']), cur = metaOf(html, ['product:price:currency', 'og:price:currency', 'priceCurrency']);
+      var img = metaOf(html, ['og:image', 'twitter:image']);
+      if (title && (!n.name || n.name.length < 8)) n.name = title.slice(0, 140);
+      if (price && !n.price) { var pv = toNum(/,\d{1,2}$/.test(price) ? price : price.replace(/,/g, '')); if (pv == null) pv = num(price); if (pv) n.price = pv; }
+      if (/EUR/i.test(cur)) n.cur = 'EUR'; else if (/USD/i.test(cur)) n.cur = 'USD';
+      if (img && window.KlavuzAndroid && KlavuzAndroid.fetchImage) KlavuzAndroid.fetchImage(img);
+    }
+    if (st.tab === 'katalog' && !st.item) render(true);
+  };
+  window.KlavuzImage = function (dataUrl) {
+    var n = st.newProd; if (!n || !dataUrl) return;
+    var im = new Image();
+    im.onload = function () { var u = thumbUrl(im); if (u && st.newProd === n) { n.img = u; if (st.tab === 'katalog' && !st.item) render(true); } };
+    im.src = dataUrl;
+  };
   function viewItem(id) {
     var it = db.items[id];
     if (!it) return '<div class="card"><p>Ürün bulunamadı.</p></div>';
@@ -1161,12 +1369,14 @@
       '<div class="card detail">' + thumb(it, 'hero') +
       '<div><h2>' + esc(it.name) + '</h2>' + (it.sub ? '<div class="sub">' + esc(it.sub) + '</div>' : '') +
       '<div class="muted"><button class="link" data-act="gobrand" data-id="' + esc(it.brand) + '">' + esc(it.brand) + '</button>' + (sel.code ? ' · kod ' + esc(sel.code) : '') + '</div>' +
-      '<label class="catsel">Kategori <select data-cat="' + id + '"><option value="">Kategorisiz</option>' + CATS.map(function (c) { return '<option value="' + c[0] + '"' + (it.category === c[0] ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') + '</select></label></div>' +
+      '<label class="catsel">Kategori <select data-cat="' + id + '"><option value="">Kategorisiz</option>' + CATS.map(function (c) { return '<option value="' + c[0] + '"' + (it.category === c[0] ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') + '</select></label>' +
+      '<label class="catsel">İkinci kategori <select data-cat2="' + id + '"><option value="">Yok</option>' + CATS.map(function (c) { return '<option value="' + c[0] + '"' + (it.cat2 === c[0] ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') + '</select></label></div>' +
       '<div>' + badgesOf(it, offs) + '</div>' + variants +
       (sel.sellPrice != null ? '<div class="bigprice">' + fmtC(sel.sellPrice, sel.cur) + ' <span class="muted">(öneri satış' + (sel.size ? ', ' + esc(sel.size) : '') + ')</span></div>' :
         '<div class="muted">Bu katalogda fiyat yok' + (sel.size ? ' · seçili ölçü ' + esc(sel.size) : '') + '. Fiyat listesi yüklenince ya da "Düzelt" ile eklenir.</div>') +
       (sel.priceVat != null ? '<div class="muted">Listede KDV dahil: ' + fmtC(sel.priceVat, sel.cur) + '</div>' : '') +
       (sel.specs ? '<div class="specs">' + sel.specs.split(' · ').map(function (x) { return '<span>' + esc(x) + '</span>'; }).join('') + '</div>' : '') +
+      (sel.link ? '<a class="btnlike" target="_blank" rel="noopener" href="' + esc(sel.link) + '">Ürünün internet sayfasını aç</a>' : '') +
       '<div class="row"><button class="primary" data-act="addcart" data-id="' + sel.id + '">Sepete ekle</button>' +
       '<button class="ghost" data-act="hist" data-id="' + sel.id + '">Fiyat geçmişi</button></div>' +
       (st.histOffer === sel.id ? histHtml(sel.id) : '') +
@@ -1179,7 +1389,8 @@
       '<div class="card"><h3>Tedarikçi teklifleri</h3>' + offs.map(offerRow).join('') + '</div>' +
       '<div class="card"><label>Not <input data-note="' + id + '" value="' + esc(it.note || '') + '"></label>' +
       '<div class="row"><button class="danger" data-act="delitem" data-id="' + id + '">Ürünü sil</button></div></div>' +
-      (sim.length ? '<div class="card"><h3>Benzer ürünler (karar sizin)</h3>' + sim.map(function (x) {
+      altHtml(it, sel) +
+      (sim.length ? '<div class="card"><h3>Aynı ürün olabilir (birleştirme kararı sizin)</h3>' + sim.map(function (x) {
         return '<div class="row"><span>' + esc(x.name) + ' · ' + esc(offersOf(x.id).map(function (o) { return o.code; }).join(', ')) +
           '</span><button class="ghost" data-act="merge" data-id="' + x.id + '">Aynı ürün, birleştir</button></div>';
       }).join('') + '</div>' : '');
@@ -1204,6 +1415,7 @@
       var isCert = d.kind === 'sertifika';
       return '<div class="row"><span><b>' + esc(d.name) + '</b><div class="muted">' + esc(d.supplier) + ' · ' + esc(d.date) + ' · ' + d.count + (isCert ? ' sayfa' : ' satır') + ' · ' + (KINDS[d.kind] || 'ana katalog') + '</div></span>' +
         '<span>' + (isCert ? '<button class="link" data-act="opendoc" data-id="' + d.id + '">Aç</button>' : '<button class="link" data-act="rep" data-id="' + d.id + '">Rapor</button>') +
+        (d.hasFile ? '<button class="link" data-act="reread" data-id="' + d.id + '">Yeniden oku</button>' : '') +
         '<button class="link danger-text" data-act="deldoc" data-id="' + d.id + '">Sil</button></span></div>' +
         (st.repDoc === d.id ? '<div class="report">' + reportHtml(d.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="' + d.id + '">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="' + d.id + '">Kopyala</button></div></div>' : '');
     }).join('');
@@ -1220,7 +1432,12 @@
       '<input type="file" id="docFile" multiple accept=".pdf,.xlsx,.xls,.csv,.txt">' +
       '<div class="row"><button class="primary" data-act="read">Belgeleri oku</button></div></div>' +
       '<div id="jobs" class="jobs">' + jobsHtml() + '</div>';
-    return h + '<div class="card"><h3>Yüklenen belgeler</h3>' + (docs || '<p class="muted">Henüz belge yok.</p>') + '</div>';
+    var kept = db.docs.filter(function (d) { return d.hasFile; }).length;
+    return h + (st.newProd ? newProdHtml() : '<div class="row"><button class="soft" data-act="newprod">Elle ürün ekle</button></div>') +
+      '<div class="card"><h3>Yüklenen belgeler</h3>' +
+      (db.docs.length ? '<div class="muted">Yeni sürümde okuma geliştikçe eski belgeleri baştan okutabilirsiniz; elle yaptığınız düzeltmeler korunur. ' + kept + ' / ' + db.docs.length + ' belgenin aslı cihazda saklı. Aslı saklı olmayanlar için aynı dosyayı yukarıdan yeniden seçmeniz yeter.</div>' +
+        (kept ? '<div class="row"><button class="soft" data-act="rereadall">Aslı saklı ' + kept + ' belgeyi yeniden oku</button></div>' : '') : '') +
+      (docs || '<p class="muted">Henüz belge yok.</p>') + '</div>';
   }
   function viewCart() {
     var lines = db.cart.filter(function (l) { return db.offers[l.offerId]; });
@@ -1258,7 +1475,21 @@
       '<div class="row"><button class="ghost" data-act="cartclear">Sepeti boşalt</button></div></div>' +
       '<div class="card"><h3>Müşteri çıktısı</h3><div class="muted">Yalnızca satış fiyatları yer alır. Alış ve kâr görünmez.</div>' +
       '<pre id="cust">' + esc(custText) + '</pre>' +
-      '<div class="row"><button data-act="print">Yazdır / PDF</button><button class="ghost" data-act="copy">Metni kopyala</button></div></div>';
+      '<div class="row"><button data-act="print">Yazdır / PDF</button><button class="ghost" data-act="copy">Metni kopyala</button></div></div>' +
+      '<div class="card"><h3>Teklife aktar</h3><div class="muted">Sepetteki kalemler teklif programında (TeklifX, Excel) açılabilen bir tablo dosyası olarak kaydedilir ya da paylaşılır. Yalnız satış fiyatları yer alır.</div>' +
+      '<div class="row"><button class="primary" data-act="cartfile">Teklif dosyası kaydet</button><button class="ghost" data-act="cartshare">Paylaş</button></div></div>';
+  }
+  // Sepeti teklif tablosuna çevir (noktalı virgülle ayrılmış; Excel ve TeklifX için)
+  function cartCsv() {
+    var cd = db.cartDiscount || 0, q = function (v) { v = String(v == null ? '' : v); return /[";\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+    var nf = function (v) { return v == null ? '' : String(Math.round(v * 100) / 100).replace('.', ','); };
+    var out = [['Sıra', 'Ürün', 'Kod', 'Marka', 'Satıcı', 'Ölçü', 'Adet', 'Birim fiyat', 'İskonto %', 'Tutar', 'Para birimi'].join(';')];
+    db.cart.filter(function (l) { return db.offers[l.offerId]; }).forEach(function (l, i) {
+      var o = db.offers[l.offerId], it = db.items[o.itemId] || { name: '?', brand: '' };
+      var disc = 100 - (100 - (l.disc || 0)) * (100 - cd) / 100;
+      out.push([i + 1, q(it.name + (it.sub ? ' ' + it.sub : '')), q(o.code), q(it.brand), q(o.supplier), q(o.size), l.qty, nf(o.sellPrice), nf(disc), nf((o.sellPrice || 0) * l.qty * (1 - disc / 100)), o.cur || 'TL'].join(';'));
+    });
+    return '\uFEFF' + out.join('\r\n') + '\r\n';
   }
   function customerText(cust, cd, totals) {
     var s = db.settings, out = [];
@@ -1309,7 +1540,8 @@
   function viewAlerts() {
     var a = alerts(), checkCount = Object.values(db.items).filter(itemCheckNeeded).length;
     var head = '<div class="card"><div class="row"><b>Kontrol bekleyen ürün: ' + checkCount + '</b>' +
-      '<button class="primary" data-act="nextcheck" data-id="">Kontrole başla</button></div></div>';
+      '<button class="primary" data-act="nextcheck" data-id="">Elle kontrol et</button></div>' +
+      '<div class="row"><button class="soft" data-act="autocheck">Otomatik kontrol et</button><span class="muted">Sistem çözebildiklerini kendisi ayıklar; yalnız gerçekten belirsiz olanlar size kalır.</span></div></div>';
     if (!a.length) return head + '<div class="card"><p class="muted">Seçili bildirim türlerinde uyarı yok. Türleri Ayarlar\'dan açıp kapatabilirsiniz.</p></div>';
     var byWhy = {}; Object.values(db.offers).forEach(function (o) { if (o.status === 'check') { var w = o.why || 'neden kaydedilmemiş (eski sürüm)'; byWhy[w] = (byWhy[w] || 0) + 1; } });
     var whyKeys = Object.keys(byWhy).sort(function (x, y) { return byWhy[y] - byWhy[x]; });
@@ -1329,32 +1561,31 @@
   var VTEST = [
     ['Kurulum', [
       ['k1', 'Yeni sürüm eskisinin üstüne kuruldu; ürünlerim, resimlerim ve ayarlarım duruyor'],
-      ['k2', 'Uygulama uçak modunda açılıyor ve belge okuyor'],
-      ['k3', 'Yeni uygulama simgesi ana ekranda görünüyor']]],
-    ['Belge okuma', [
-      ['c1', 'Dosya seçicide birden çok belge seçebildim; Google Drive da göründü'],
-      ['c2', 'Belgeler sırayla okundu; okuma sürerken diğer ekranları kullanabildim'],
-      ['c3', '10 MB üstü bir katalog çökmeden okundu'],
-      ['c4', 'Okuma yarıda kalınca aynı dosyayı seçtim, kaldığı sayfadan devam etti'],
-      ['c5', 'Ürün adları, kodlar, ölçüler, fiyatlar ve resimler doğru geldi'],
-      ['c6', 'Okuma hızı yeterli (rapordaki süreyi ve sayfa sayısını nota yazın)']]],
-    ['Kategori', [
-      ['t1', 'Ürünler kendiliğinden kategorilere ayrıldı; çoğu doğru yerde'],
-      ['t2', 'Ayrılamayanlar "Kategorisiz" grubunda göründü'],
-      ['t3', 'Ürün sayfasından kategoriyi elle değiştirdim; benzer ürünler de aynı kategoriye geçti']]],
-    ['Arama', [
-      ['s1', 'Ara ekranında Kategori / Marka / Satıcı / Belge gruplarına göre süzebildim'],
-      ['s2', 'Tarifle arama çalıştı (örn. "paslanmaz küresel vana" ya da İngilizce "ball valve")'],
-      ['s3', 'Çok ürün varken arama takılmadan çalışıyor']]],
-    ['Marka ve satıcı', [
-      ['m1', 'Belge yüklerken marka ve satıcıyı ayrı yazabildim; marka önerileri çıktı'],
-      ['m2', 'Marka kartı kendiliğinden oluştu; site / telefon belgeden doldu (doğruysa ✓)'],
-      ['m3', 'Marka kartındaki "belge yükle" düğmesi markayı hazır getirdi'],
-      ['m4', 'Aynı kodlu ürünün ikinci satıcıdan gelen fiyatı aynı ürün kartına eklendi'],
-      ['m5', 'Satıcı kartına yazdığım iskonto bütün tekliflerine uygulandı']]],
-    ['Yedek ve arayüz', [
-      ['r1', 'Yedek indir çalıştı; yedekten yükle önce onay sordu ve veriler geri geldi'],
-      ['a1', 'Geri tuşu açık sayfayı kapatıyor, uygulamadan birden çıkmıyor']]]
+      ['k2', 'İlk açılışta uyarı ve "doğrulanmamış" sayısı kendiliğinden azaldı']]],
+    ['Yeniden okuma', [
+      ['y1', 'Daha önce yüklediğim bir dosyayı yeniden seçtim; soru sormadan baştan okudu ve eskisinin yerine geçti'],
+      ['y2', 'Yeniden okumadan sonra elle yaptığım düzeltmeler (satış fiyatı, kategori, doğrulama) durdu'],
+      ['y3', 'Bu sürümde yüklediğim belgede "Yeniden oku" düğmesi çıktı ve dosyayı seçmeden baştan okudu'],
+      ['y4', '"Aslı saklı belgeleri yeniden oku" hepsini sırayla okudu']]],
+    ['Otomatik kontrol', [
+      ['o1', 'Uyarılar ekranında "Otomatik kontrol et" uyarı sayısını düşürdü'],
+      ['o2', 'Otomatik doğrulanan ürünler doğru görünüyor (yanlış olan varsa nota yazın)'],
+      ['o3', 'Elle kontrole kalanlar gerçekten bakılması gerekenler']]],
+    ['Fiyatsız katalog ve elle ürün', [
+      ['f1', 'Fiyat olmayan bir katalogdaki ürünler kart olarak eklendi'],
+      ['f2', '"Elle ürün ekle" ile ürün ekleyebildim']]],
+    ['Kategori ve öneri', [
+      ['t1', 'İki gruba giren ürün iki kategoride de göründü; ikinci kategoriyi elle seçebildim'],
+      ['t2', 'Ürün sayfasında "Benzer ve alternatif ürünler" başka marka / satıcıdan aynı tip ürünleri gösterdi']]],
+    ['Sepet ve teklif', [
+      ['s1', '"Teklif dosyası kaydet" çalıştı; dosya Excel ya da TeklifX içinde açıldı'],
+      ['s2', 'Sepeti "Paylaş" ile gönderebildim']]],
+    ['İnternetten ürün', [
+      ['w1', 'Amazon / Hepsiburada ürün sayfasında "Paylaş" deyince listede Klavuz çıktı'],
+      ['w2', 'Paylaşınca ürün adı ve bağlantı forma geldi; fiyat ve resim de geldiyse nota yazın'],
+      ['w3', 'Ürün eklendi; ürün sayfasındaki bağlantı siteyi açtı']]],
+    ['Büyük belge', [
+      ['g1', '10 MB üstü bir katalog çökmeden okundu (süreyi nota yazın)']]]
   ];
   function vt() {
     if (!db.vtest || db.vtest.ver !== APP_VERSION) db.vtest = { ver: APP_VERSION, marks: {}, notes: {}, gnotes: {} };
@@ -1396,6 +1627,27 @@
       out.push('');
     });
     return out.join('\n').trim();
+  }
+  function statusText() {
+    var out = ['Klavuz ' + APP_VERSION + ' · Durum özeti · ' + today(),
+      Object.keys(db.items).length + ' ürün · ' + Object.keys(db.offers).length + ' teklif · ' + db.docs.length + ' belge · kayıt: ' + storeMode + (pdfEngine ? ' · motor: ' + pdfEngine : ''), ''];
+    var byDoc = {}, why = {};
+    Object.values(db.offers).forEach(function (o) {
+      var b = byDoc[o.docId] = byDoc[o.docId] || { n: 0, chk: 0, noPrice: 0 }; b.n++;
+      if (o.listPrice == null) b.noPrice++;
+      if (o.status === 'check') { b.chk++; why[o.why || '?'] = (why[o.why || '?'] || 0) + 1; }
+    });
+    db.docs.forEach(function (d) {
+      var b = byDoc[d.id] || { n: 0, chk: 0, noPrice: 0 }, r = d.report || {};
+      out.push('- ' + d.name + ' [' + (d.brand || d.supplier) + (d.brand && d.brand !== d.supplier ? ' / ' + d.supplier : '') + ', ' + (KINDS[d.kind] || d.kind) + '] ' +
+        (d.kind === 'sertifika' ? d.count + ' sayfa görüntüsü' : b.n + ' teklif, ' + b.chk + ' kontrol, ' + b.noPrice + ' fiyatsız' + (r.pages ? ', ' + r.pages + ' sayfa' : '') + (r.secs ? ', ' + r.secs + ' sn' : '') + (r.infoCount ? ', ' + r.infoCount + ' bilgi tablosu' : '')) + (d.hasFile ? '' : ' (aslı saklı değil)'));
+    });
+    var cat = {}; Object.values(db.items).forEach(function (it) { var c = catName(it.category); cat[c] = (cat[c] || 0) + 1; });
+    out.push('', 'Kategoriler: ' + Object.keys(cat).sort(function (a, b) { return cat[b] - cat[a]; }).map(function (c) { return c + ' ' + cat[c]; }).join(', '));
+    out.push('Doğrulanmamış ürün: ' + Object.values(db.items).filter(function (it) { return !it.verified; }).length);
+    var wk = Object.keys(why).sort(function (a, b) { return why[b] - why[a]; });
+    if (wk.length) out.push('Kontrol nedenleri: ' + wk.map(function (w) { return w + ' ' + why[w]; }).join('; '));
+    return out.join('\n');
   }
   function shareText(t) {
     try {
@@ -1467,6 +1719,7 @@
       '<div class="kv"><span>Çalışma</span><b>Türkçe · çevrimdışı</b></div>' +
       '<div class="kv"><span>Kayıt alanı</span><b>' + (storeMode === 'idb' ? 'geniş veritabanı' : 'dar alan (eski yöntem)') + (pdfEngine ? ' · okuma motoru: ' + pdfEngine : '') + '</b></div>' +
       '<div class="kv"><span>Firma</span><b>HC MARIN WORKS</b></div>' +
+      '<div class="row"><button class="soft" data-act="ozet">Durum özetini paylaş</button><span class="muted">Belgeler, sayılar ve uyarı nedenleri (ürün bilgisi içermez)</span></div>' +
       '<div class="muted">Kayıtlar dış sunucuya gönderilmez. Veri yalnız sizin başlattığınız paylaşım ve yedekle cihazdan çıkar.</div>';
     return '<h1 class="ptitle">Ayarlar</h1>' +
       sect('fb', 'Deneyim ve öneri', 'Puan ve notlar', fb) +
@@ -1540,7 +1793,7 @@
   }
   function jobById(id) { return jobs.filter(function (j) { return j.id === id; })[0]; }
   function saveMsg(r) {
-    return r.cert ? 'Belge kaydedildi' : 'Kaydedildi: ' + r.created + ' yeni, ' + r.updated + ' güncellendi, ' + r.changed + ' fiyat değişti' + (r.pending ? ', ' + r.pending + ' ana katalog bekliyor' : '');
+    return r.cert ? 'Belge kaydedildi' : 'Kaydedildi: ' + r.created + ' yeni, ' + r.updated + ' güncellendi, ' + r.changed + ' fiyat değişti' + (r.pending ? ', ' + r.pending + ' ana katalog bekliyor' : '') + (r.ver ? ' · ' + r.ver + ' ürün otomatik doğrulandı' : '');
   }
   function saveDraft(id) {
     var j = jobById(id); if (!j || j.status !== 'ready') return;
@@ -1580,17 +1833,23 @@
     var name = 'klavuz-yedek-' + today() + '.json';
     flush();
     // Android: önce kayıt yeri seçilir, sonra KlavuzSaveReady çağrılır ve yedek parça parça yazılır
-    if (window.KlavuzAndroid && KlavuzAndroid.saveBegin) { KlavuzAndroid.saveBegin(name); return; }
+    if (window.KlavuzAndroid && KlavuzAndroid.saveBegin) { pendingText = null; KlavuzAndroid.saveBegin(name); return; }
     toast('Yedek hazırlanıyor...');
     var parts = [];
     backupParts(function (s) { parts.push(s); }).then(function () {
       var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(parts, { type: 'application/json' })); a.download = name; a.click();
     }, function () { toast('Yedek hazırlanamadı.'); });
   }
+  // Metin dosyası kaydet (teklif tablosu gibi): Android'de kayıt yeri penceresi, tarayıcıda indirme
+  var pendingText = null;
+  function saveTextFile(name, text) {
+    if (window.KlavuzAndroid && KlavuzAndroid.saveBegin) { pendingText = text; KlavuzAndroid.saveBegin(name); return; }
+    var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/csv' })); a.download = name; a.click();
+  }
   window.KlavuzSaveReady = function () {
-    toast('Yedek yazılıyor...');
-    var N = 200000;
-    backupParts(function (s) {
+    var N = 200000, src = pendingText == null ? backupParts : function (emit) { return Promise.resolve(emit(pendingText)); };
+    toast(pendingText == null ? 'Yedek yazılıyor...' : 'Dosya yazılıyor...'); pendingText = null;
+    src(function (s) {
       for (var i = 0; i < s.length;) {
         var e = Math.min(s.length, i + N), c = s.charCodeAt(e - 1);
         if (e < s.length && c >= 0xD800 && c <= 0xDBFF) e++; // çift parçalı harfi ortasından bölme
@@ -1651,7 +1910,7 @@
       case 'hist': st.histOffer = st.histOffer === id ? null : id; render(); break;
       case 'ack': if (db.offers[id]) { db.offers[id].lastDir = null; save(); } render(); break;
       case 'merge': mergeItems(id, st.item); toast('Ürünler birleştirildi'); render(); break;
-      case 'verify': if (db.items[id]) { db.items[id].verified = true; offersOf(id).forEach(function (o) { if (o.status === 'check') o.status = 'ok'; }); save(); toast('Doğrulandı'); nextCheck(id); } break;
+      case 'verify': if (db.items[id]) { db.items[id].verified = true; db.items[id].autoVer = false; offersOf(id).forEach(function (o) { if (o.status === 'check') o.status = 'ok'; }); save(); toast('Doğrulandı'); nextCheck(id); } break;
       case 'nextcheck': nextCheck(id || st.item); break;
       case 'edit': st.edit = id; render(); break;
       case 'canceledit': st.edit = null; render(); break;
@@ -1685,6 +1944,15 @@
       case 'jobstop': { var js = jobById(id); if (js && confirm('Okuma durdurulsun mu? Bu belgeden okunanlar silinir.')) { js.stop = true; js.prog = 'Durduruluyor...'; drawJobs(); } break; }
       case 'jobdel': { var jd = jobById(id); if (jd) { dropJob(jd); drawJobs(); } break; }
       case 'saveall': saveAllDrafts(); break;
+      case 'reread': reread([id]); break;
+      case 'rereadall': reread(db.docs.filter(function (d) { return d.hasFile; }).map(function (d) { return d.id; })); break;
+      case 'autocheck': { var ac = autoCheck(); save(); toast(ac.fixed || ac.ver ? ac.fixed + ' uyarı giderildi, ' + ac.ver + ' ürün otomatik doğrulandı' : 'Otomatik çözülebilecek uyarı kalmadı'); render(true); break; }
+      case 'newprod': st.newProd = { name: '', link: '', seller: '', brand: st.catBrand || '', code: '', size: '', price: '', cur: 'TL', img: '' }; render(true); break;
+      case 'npsave': saveNewProd(); break;
+      case 'npcancel': st.newProd = null; render(true); break;
+      case 'cartfile': saveTextFile('klavuz-teklif-' + today() + '.csv', cartCsv()); break;
+      case 'cartshare': shareText($('#cust').textContent); break;
+      case 'ozet': shareText(statusText()); break;
       case 'opendoc': st.docView = id; render(); break;
       case 'closedoc': st.docView = null; render(); break;
       case 'save': saveDraft(id); break;
@@ -1711,6 +1979,7 @@
   document.addEventListener('input', function (e) {
     var t = e.target, d = t.dataset;
     if (t.id === 'q') { st.q = t.value; drawResults(); }
+    else if (d.np) { if (st.newProd) st.newProd[d.np] = t.value; }
     else if (d.fbscore) {
       var f0 = db.feedback[d.fbscore] = db.feedback[d.fbscore] || {}; f0.score = Number(t.value); save();
       var bd = $('#sc_' + d.fbscore); if (bd) { bd.textContent = t.value; bd.style.background = scoreColor(f0.score); }
@@ -1728,6 +1997,8 @@
     else if (d.cat) {
       var ci = db.items[d.cat]; if (ci) { var cn = setCategory(ci, t.value); save(); toast(cn ? 'Kategori kaydedildi; benzer ' + cn + ' ürün de ayrıldı' : 'Kategori kaydedildi'); }
     }
+    else if (d.np) { if (st.newProd) st.newProd[d.np] = t.value; }
+    else if (d.cat2) { if (db.items[d.cat2]) { db.items[d.cat2].cat2 = t.value; db.items[d.cat2].catBy = 'user'; save(); toast('İkinci kategori kaydedildi'); } }
     else if (d.prof) {
       var pk = d.prof.split('|'), book = pk[0] === 'marka' ? db.brands : db.sellers, rec = book[d.name] = book[d.name] || {};
       rec[pk[1]] = pk[1] === 'disc' ? num(t.value) : t.value.trim(); rec.auto = false;
@@ -1744,9 +2015,10 @@
     else if (t.id === 'profFile' && t.files[0]) { t.files[0].text().then(importProfile); }
   });
 
-  window.KlavuzSaved = function (ok) { toast(ok ? 'Yedek kaydedildi' : 'Yedek kaydedilemedi'); };
+  window.KlavuzSaved = function (ok) { toast(ok ? 'Dosya kaydedildi' : 'Dosya kaydedilemedi'); };
   // Android geri tuşu: önce açık sayfayı kapatır, sonra Ara sekmesine döner. false dönerse uygulama arka plana alınır.
   window.KlavuzBack = function () {
+    if (st.newProd && st.tab === 'katalog' && !st.item) { st.newProd = null; render(true); return true; }
     if (st.item) { if (st.pick) st.pick = false; else if (st.edit) st.edit = null; else st.item = null; render(); return true; }
     if (st.docView) { st.docView = null; render(); return true; }
     if (st.tab !== 'ara') { go('ara'); return true; }
@@ -1772,11 +2044,14 @@
     } catch (e) { storeMode = 'ls'; db = normalize(old); saveBad = false; }
     touch();
     var cn = 0;
-    Object.values(db.items).forEach(function (it) { if (!it.category && it.catBy !== 'user') { var c = classify(it.name, it.sub); if (c) { it.category = c; it.catBy = 'auto'; cn++; } } });
+    Object.values(db.items).forEach(function (it) { if (it.catBy !== 'user' && (!it.category || it.cat2 == null)) { var c0 = it.category; autoCat(it); if (it.category !== c0 || it.cat2) cn++; } });
+    if (db.autoRun !== APP_VERSION) { autoCheck(); db.autoRun = APP_VERSION; cn++; }
     if (cn) save();
     await loadJobs();
     window.KlavuzHazir = true;
     render();
+    // Uygulama başka bir uygulamadan "paylaş" ile açıldıysa gelen metni al
+    try { var sh = window.KlavuzAndroid && KlavuzAndroid.takeShared ? KlavuzAndroid.takeShared() : ''; if (sh) window.KlavuzShared(sh); } catch (e) {}
   }
   boot();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {

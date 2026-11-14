@@ -1,4 +1,4 @@
-const CACHE = 'klavuz-v5';
+const CACHE = 'klavuz-v6';
 const SHELL = ['./', './index.html', './app.js', './okuyucu.js', './vendor/pdf.min.js', './vendor/pdf.worker.min.js', './vendor/xlsx.full.min.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {

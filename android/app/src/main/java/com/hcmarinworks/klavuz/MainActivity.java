@@ -14,7 +14,11 @@ import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
+import java.io.ByteArrayOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -29,6 +33,8 @@ public class MainActivity extends AppCompatActivity {
     private boolean saveOk;
     private final Object saveLock = new Object();
     private long lastBack;
+    private String sharedText = "";
+    private boolean pageReady;
 
     private void deliverFiles(Uri[] uris) {
         if (filePathCallback != null) {
@@ -82,6 +88,51 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
+        /** Uygulama başka bir uygulamadan "paylaş" ile açıldıysa gelen metni bir kez verir. */
+        @JavascriptInterface
+        public String takeShared() {
+            pageReady = true;
+            String t = sharedText;
+            sharedText = "";
+            return t;
+        }
+
+        /** Paylaşılan ürün sayfasını indirir (internet varsa) ve sayfadaki KlavuzPage işlevine verir. */
+        @JavascriptInterface
+        public void fetchText(String link) {
+            new Thread(() -> {
+                String html = "";
+                try {
+                    byte[] b = download(link, 600 * 1024);
+                    if (b != null) html = new String(b, StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    html = "";
+                }
+                final String arg = org.json.JSONObject.quote(html);
+                runOnUiThread(() -> {
+                    if (web != null) web.evaluateJavascript("window.KlavuzPage && KlavuzPage(" + arg + ")", null);
+                });
+            }).start();
+        }
+
+        /** Ürün resmini indirir ve sayfadaki KlavuzImage işlevine verir. */
+        @JavascriptInterface
+        public void fetchImage(String link) {
+            new Thread(() -> {
+                String data = "";
+                try {
+                    byte[] b = download(link, 3 * 1024 * 1024);
+                    if (b != null) data = "data:image/jpeg;base64," + android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP);
+                } catch (Exception e) {
+                    data = "";
+                }
+                final String arg = org.json.JSONObject.quote(data);
+                runOnUiThread(() -> {
+                    if (web != null) web.evaluateJavascript("window.KlavuzImage && KlavuzImage(" + arg + ")", null);
+                });
+            }).start();
+        }
+
         /** Yedek: kayıt yeri penceresini açar. Yer seçilince sayfadaki KlavuzSaveReady çağrılır. */
         @JavascriptInterface
         public void saveBegin(String name) {
@@ -130,9 +181,66 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
+    /** Yalnız kullanıcının paylaştığı adresi indirir; en çok "limit" bayt okur. Yalnız https kabul edilir. */
+    private byte[] download(String link, int limit) throws Exception {
+        URL url = new URL(link);
+        for (int hop = 0; hop < 5; hop++) {
+            if (!"https".equals(url.getProtocol())) return null;
+            HttpURLConnection c = (HttpURLConnection) url.openConnection();
+            c.setConnectTimeout(8000);
+            c.setReadTimeout(12000);
+            c.setInstanceFollowRedirects(false);
+            c.setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36");
+            c.setRequestProperty("Accept-Language", "tr-TR,tr;q=0.9,en;q=0.8");
+            int code = c.getResponseCode();
+            if (code >= 300 && code < 400) {
+                String loc = c.getHeaderField("Location");
+                c.disconnect();
+                if (loc == null) return null;
+                url = new URL(url, loc);
+                continue;
+            }
+            if (code != 200) {
+                c.disconnect();
+                return null;
+            }
+            try (InputStream in = c.getInputStream()) {
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                byte[] buf = new byte[16384];
+                int n;
+                while (out.size() < limit && (n = in.read(buf)) > 0) out.write(buf, 0, n);
+                return out.toByteArray();
+            } finally {
+                c.disconnect();
+            }
+        }
+        return null;
+    }
+
+    /** Başka uygulamadan "paylaş" ile gelen metni alır (örn. alışveriş sitesindeki ürün bağlantısı). */
+    private void takeIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_SEND.equals(intent.getAction())) return;
+        String t = intent.getStringExtra(Intent.EXTRA_TEXT);
+        String subj = intent.getStringExtra(Intent.EXTRA_SUBJECT);
+        if (t == null) return;
+        if (subj != null && !t.contains(subj)) t = subj + " " + t;
+        if (pageReady && web != null) {
+            web.evaluateJavascript("window.KlavuzShared && KlavuzShared(" + org.json.JSONObject.quote(t) + ")", null);
+        } else {
+            sharedText = t;
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        takeIntent(intent);
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        takeIntent(getIntent());
 
         web = new WebView(this);
         setContentView(web);

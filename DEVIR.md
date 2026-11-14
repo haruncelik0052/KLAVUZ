@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-9862a3e5-483rrf` dalı (sürüm 0.5.0; `ccr-2f65d271-hbxt5y` üzerine kuruldu)
+- Güncel çalışma: `ccr-9862a3e5-483rrf` dalı (sürüm 0.6.0; `ccr-2f65d271-hbxt5y` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -123,3 +123,17 @@ Kullanıcı kararı (14.11.2026): **seçim sorulmasın; gerekli seçim ve kararl
 - **Simge:** `icon.svg` ve Android başlatıcı simgesi (`res/drawable/ic_klavuz*.xml`).
 
 Sıradaki iş (0.6.0): okunamayan düzenler — ters tablo (Rushwarm), kodsuz özellik kartı (Asmarine), çift fiyat sütunlu kodsuz liste (Eser Pompa), sonra OCR. Ardından 0.7.0: karşılaştırma ekranı, ekran düzeni, isteğe bağlı Drive bağlantısı.
+
+## Sürüm 0.6.0 ekleri (yeniden okuma, otomatik kontrol, teklife aktarma, internetten ürün)
+
+Kullanıcının 0.5.0 telefon sonucu: 17 / 22 işaretlendi, 16 ✓. Kurulum, veri taşıma, çoklu ve arka planda okuma, yarım kalan okumaya devam, yedek (31 MB) ve geri tuşu telefonda çalıştı. 10 MB üstü katalog ve okuma hızı henüz denenmedi.
+
+- **Yeniden okuma:** `recommit` eski okumanın kayıtlarını yenisiyle değiştirir; elle doğrulanan ürün, özel satış fiyatı, iskonto, sepet, fiyat geçmişi, not ve elle atanan kategori korunur. Daha önce yüklenmiş dosya yeniden seçilince soru sorulmaz, kendiliğinden kaydedilir. 25 MB altı belgelerin aslı `file` deposunda saklanır (`doc.hasFile`); "Yeniden oku" ve "Aslı saklı belgeleri yeniden oku" düğmeleri. Veritabanı sürümü 3.
+- **Otomatik kontrol (`autoCheck`):** çözülebilen uyarıları kapatır, uyarısı kalmayan ürünü "otomatik doğrulandı" yapar (`item.autoVer`). Her kayıttan sonra, her yeni sürümün ilk açılışında ve Uyarılar ekranındaki düğmeyle çalışır. Ad bulunamadı / kod okunamadı / fiyat okunamadı elle kontrole kalır.
+- **Fiyatsız ve kodsuz tablo:** adı, resmi ve ölçüleri varsa ürün kartı olur (`readPage` içinde `plain`).
+- **İkinci kategori (`item.cat2`)** ve ürün sayfasında **benzer / alternatif ürünler** (`altItems`).
+- **Teklife aktarma:** sepet `cartCsv` ile noktalı virgüllü tablo dosyası olur. TeklifX'in içe aktarma biçimi henüz tanımlı değil; tanımlanınca sütunlar ona uydurulacak.
+- **Elle ürün ve internetten paylaşım:** Android `SEND` (text/plain) alıcısı; `KlavuzShared` bağlantı ve adı ayırır. İnternet varsa `fetchText` / `fetchImage` sayfadan ad, fiyat, resim almayı dener (yalnız https, yalnız paylaşılan adres). Site izin vermezse form elle doldurulur.
+- **Durum özeti:** Ayarlar > Uygulama bilgileri. Belge bazında sayı ve uyarı nedenlerini metin olarak paylaşır; yedek dosyası (onlarca MB) bu ortamda açılamadığı için uzaktan teşhiste bu kullanılır.
+
+Sıradaki iş: okunamayan düzenler (ters tablo, kodsuz özellik kartı, çift fiyat sütunlu liste, OCR). Bunun için gerçek sayfa örneği gerekir; kullanıcıdan durum özeti ve okuma raporları istenecek.
