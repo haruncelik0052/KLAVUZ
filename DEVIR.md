@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.11.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
+- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.11.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -199,3 +199,10 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - **İnternetten alınan üründe kırıntı yolu:** `crumbOf` (JSON-LD BreadcrumbList, Amazon `#wayfinding-breadcrumbs_feature_div`, genel breadcrumb) → `item.crumb`; ayırmada alt başlık ağırlığında ipucu. Liste sayfasında sayfanın yolu bütün ürünlere uygulanır.
 - Testler: `tests/e2e.js` 16. adım (kırıntıdan alt grup, ürün sayfası yolu, alt grup kutuları ve süzme, alt grup ekle / ad değiştir / sil).
 - Deneme kancası: `KLAVUZ_TEST.api.classify(ad, alt, kırıntı)` → `[kategori, ikinci]`.
+
+## Sürüm 0.11.1 (büyük katalogda donma düzeltmesi)
+
+- Kullanıcı 93 MB "2026 SEAFLO Marine Equipment Catalog" yükleyince uygulama dondu. Neden: Seaflo'nun bütün yazıları çizime çevrilmiş, sayfalar çift sayfa (1207 × 825 pt). OCR her sayfayı ölçek 3'te ~9 milyon piksele çiziyor, `prep` bunu ana iş parçacığında tek seferde işliyordu (masaüstünde 0,4 sn kilit, telefonda birkaç saniye) ve sayfa başına ~150 MB bellek kullanıyordu.
+- Düzeltme: `MAX_PX = 4.6e6` (A4 ölçek 3'e sığar, çift sayfada ölçek ~2,15'e düşer; `user_defined_dpi` sayfaya göre). `prep` artık `async`; her ~25 ms'de ana iş parçacığını bırakır (en uzun kilit 418 → 45 ms). Flowmaster sonucu değişmedi.
+- Durum şeridinde kalan süre: "Sayfa 12 / 208 (OCR ile okunuyor) · yaklaşık 1 sa 40 dk kaldı" (bu oturumda okunan sayfaların ortalamasından).
+- Seaflo içeriği: her ürünün altında tek satırlık, çok küçük yazılı, fiyatsız model tablosu (SFH03-08-01 vb.); OCR'dan az ve kusurlu satır çıkıyor (parça 12: 7 sayfa, 8 satır). Bu katalog için asıl kaynak Drive'daki `seaflo-com-2026-10-28.xlsx` / `.csv` ürün listesidir. Drive'da 10 MB altına bölünmüş parçalar var (`SEAFLO_2026_SEAFLO_Marine_Equipment_Catalog_NN.pdf`).

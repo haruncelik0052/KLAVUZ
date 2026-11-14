@@ -5,6 +5,7 @@
 (function () {
   'use strict';
   var SCALE = 3;          // yaklaşık 216 dpi: küçük tablo yazıları da seçilir
+  var MAX_PX = 4.6e6;     // resim en çok bu kadar piksel (A4 ölçek 3'e sığar); büyük / çift sayfada ölçek düşer, bellek ve süre sınırlı kalır
   var MIN_CONF = 35;      // bundan düşük güvenli sözcükler atılır
   var worker = null, starting = null, info = { engine: '', err: '' };
 
@@ -81,18 +82,24 @@
   }
   // Resmi OCR için temizle: renkli zemin (kırmızı başlık, mavi şerit) beyaz olur, üstündeki beyaz yazı siyaha döner;
   // açık gri satır zemini beyaz olur. Böylece bütün yazılar beyaz zeminde koyu kalır.
-  function prep(cv) {
+  // Ekran donmasın: uzun döngüler arada ana iş parçacığını bırakır
+  function tick() { return new Promise(function (r) { setTimeout(r, 0); }); }
+  async function prep(cv) {
+    var tY = Date.now();
+    async function breath() { if (Date.now() - tY > 25) { await tick(); tY = Date.now(); } }
     var w = cv.width, h = cv.height, g = cv.getContext('2d'), im = g.getImageData(0, 0, w, h), d = im.data, n = w * h, i;
     var lum = new Uint8Array(n), col = new Uint8Array(n);
     for (i = 0; i < n; i++) {
+      if ((i & 65535) === 0) await breath();
       var r = d[4 * i], gg = d[4 * i + 1], b = d[4 * i + 2], mx = Math.max(r, gg, b), mn = Math.min(r, gg, b);
       lum[i] = (r * 299 + gg * 587 + b * 114) / 1000;
       col[i] = (mx - mn > 60 && mx > 60) || lum[i] < 110 && mx - mn > 40 ? 1 : 0; // renkli (doygun) piksel
     }
     // Renkli piksel oranı, her pikselin çevresinde (toplam tablosu ile hızlı)
     var R = Math.max(6, Math.round(w / 160)), W1 = w + 1, sum = new Int32Array(W1 * (h + 1));
-    for (var y = 0; y < h; y++) { var acc = 0; for (var x = 0; x < w; x++) { acc += col[y * w + x]; sum[(y + 1) * W1 + x + 1] = sum[y * W1 + x + 1] + acc; } }
+    for (var y = 0; y < h; y++) { if ((y & 31) === 0) await breath(); var acc = 0; for (var x = 0; x < w; x++) { acc += col[y * w + x]; sum[(y + 1) * W1 + x + 1] = sum[y * W1 + x + 1] + acc; } }
     for (y = 0; y < h; y++) {
+      if ((y & 15) === 0) await breath();
       var y0 = Math.max(0, y - R), y1 = Math.min(h, y + R + 1);
       for (x = 0; x < w; x++) {
         i = y * w + x;
@@ -110,6 +117,7 @@
     // Tablo çizgilerini sil: uzun yatay ve dikey koyu çizgiler yazı değildir, OCR'ın satırları bölmesini bozar
     var dark = function (k) { return d[4 * k] < 128; }, kill = new Uint8Array(n), L = Math.round(w / 25), H = Math.round(h / 30), run, s0;
     for (y = 0; y < h; y++) {
+      if ((y & 31) === 0) await breath();
       run = 0;
       for (x = 0; x <= w; x++) {
         if (x < w && dark(y * w + x)) { if (!run) s0 = x; run++; }
@@ -117,6 +125,7 @@
       }
     }
     for (x = 0; x < w; x++) {
+      if ((x & 31) === 0) await breath();
       run = 0;
       for (y = 0; y <= h; y++) {
         if (y < h && dark(y * w + x)) { if (!run) s0 = y; run++; }
@@ -157,16 +166,22 @@
 
   // Sayfayı çiz, OCR ile oku. items: sayfanın gerçek yazıları; onlarla çakışan OCR sözcükleri atılır.
   async function readPage(page, items) {
-    var w = await start(), vp = page.getViewport({ scale: SCALE }), cv = document.createElement('canvas');
+    var w = await start(), v1 = page.getViewport({ scale: 1 }), sc = Math.min(SCALE, Math.sqrt(MAX_PX / (v1.width * v1.height)));
+    var vp = page.getViewport({ scale: sc }), cv = document.createElement('canvas'), dpi = String(Math.round(72 * sc));
+    if (w._dpi !== dpi) { await w.setParameters({ user_defined_dpi: dpi }); w._dpi = dpi; }
     cv.width = Math.round(vp.width); cv.height = Math.round(vp.height);
     var g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
     try {
+      var t0 = Date.now();
       await page.render({ canvasContext: g, viewport: vp }).promise;
-      prep(cv);
+      var t1 = Date.now();
+      await prep(cv);
+      var t2 = Date.now();
       if ((window.KLAVUZ_TEST || {}).ocrDump) window.KLAVUZ_TEST.ocrDump = cv.toDataURL('image/png'); // yalnız testlerde
       var r;
       try { r = await limit(w.recognize(cv, {}, { blocks: true, text: false }), 180000, 'OCR sayfa okuması'); }
       catch (e) { await stop(); throw e; }
+      info.last = { render: t1 - t0, prep: t2 - t1, ocr: Date.now() - t2, px: cv.width * cv.height };
       var out = [];
       ((r.data && r.data.blocks) || []).forEach(function (bl) {
         (bl.paragraphs || []).forEach(function (pa) {

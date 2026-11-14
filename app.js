@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.11.0';
+  var APP_VERSION = '0.11.1';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -1099,7 +1099,17 @@
   }
   async function runJob(j) {
     var t0 = Date.now(), f = j.file, isPdf = /\.pdf$/i.test(j.name), r = {};
-    var prog = function (p, n, what) { j.prog = 'Sayfa ' + p + ' / ' + n + (what ? ' (' + what + ')' : ''); j.pct = Math.round(100 * p / n); drawJobs(true); };
+    // Kalan süre: bu oturumda okunan sayfaların ortalamasından (uzun OCR okumasında uygulama donmuş sanılmasın)
+    var pt0 = Date.now(), pp0 = null;
+    var prog = function (p, n, what) {
+      if (pp0 == null) pp0 = p;
+      var done = p - pp0, left = n - p, eta = '';
+      if (done >= 2 && left > 0) {
+        var m = Math.round((Date.now() - pt0) / done * left / 60000);
+        if (m >= 1) eta = ' · yaklaşık ' + (m >= 60 ? Math.floor(m / 60) + ' sa ' + (m % 60) + ' dk' : m + ' dk') + ' kaldı';
+      }
+      j.prog = 'Sayfa ' + p + ' / ' + n + (what ? ' (' + what + ')' : '') + eta; j.pct = Math.round(100 * p / n); drawJobs(true);
+    };
     await saveJob(j);
     if (isPdf) {
       r = await readPdf(f, { kind: j.kind, force: j.force, start: j.next, stat: j.stat, prog: prog,
@@ -2221,7 +2231,8 @@
       ['o1', 'Taranmış (yazısı seçilemeyen) bir katalog yükledim; durum şeridinde "OCR ile okunuyor" yazdı ve okuma bitti (süreyi nota yazın)'],
       ['o2', 'Okuma raporunda "OCR ile okunan sayfa" sayısı yazıyor; "OCR çalışmadı" yazmıyor'],
       ['o3', 'OCR ile okunan ürünler "OCR ile okundu, kontrol edin" uyarısıyla geldi; kod ve fiyatların çoğu doğru (yanlış örnekleri nota yazın)'],
-      ['o4', 'OCR sırasında uygulama kapanmadı, telefon aşırı yavaşlamadı; başka ekranlara geçebildim'],
+      ['o4', 'Büyük katalogda (örn. 93 MB Seaflo) "Belge oku" dedikten sonra uygulama donmadı; başka ekranlara geçebildim'],
+      ['o6', 'Uzun okumada durum şeridinde "yaklaşık ... kaldı" yazıyor ve süre gerçeğe yakın'],
       ['o5', 'Yazısı normal olan kataloglar eskisi gibi hızlı okundu']]],
     ['Uygulama içi tarayıcı', [
       ['b1', 'Belge sekmesi > "İnternetten ürün al" > Amazon (ya da Hepsiburada) uygulamanın içinde açıldı'],
