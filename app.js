@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.11.2';
+  var APP_VERSION = '0.12.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -732,7 +732,7 @@
       } catch (e) { stat.ocrOff = true; stat.ocrErr = (e && e.message) || String(e); }
     }
     if (items.length < 5) stat.emptyPages++;
-    var res = Okuyucu.parsePage(items, boxes, p), urls = {}, inks = {}, usedPick = {};
+    var res = parseSpread(items, boxes, p, view, ocrUsed), urls = {}, inks = {}, usedPick = {};
     if (boxes.length) {
       // Önce resmin kendisini al (üstüne yazı binmez); alınamazsa sayfa görüntüsünden kırp
       var cv = null, vp = null;
@@ -813,6 +813,24 @@
     var top = null;
     boxes.forEach(function (b) { if (urls[b.id] && (top == null || (inks[b.id] || 0) > (inks[top] || 0))) top = b.id; });
     prevPage = { p: p, lines: res.loose, img: top != null ? urls[top] : null, ink: top != null ? inks[top] || 0 : 0 };
+  }
+  // Yan yana iki sayfa (yatay, çift sayfa baskı): ortadaki boşluktan ikiye bölünüp her yarı ayrı okunur;
+  // yoksa sol ve sağ sayfanın aynı hizadaki tabloları tek tablo sanılır. Yalnız OCR'lı sayfada yapılır (yazılı kataloglar değişmez).
+  function parseSpread(items, boxes, p, view, ocr) {
+    var W = view[2] - view[0], H = view[3] - view[1], mid = view[0] + W / 2;
+    if (!ocr || W < H * 1.25 || items.length < 20) return Okuyucu.parsePage(items, boxes, p);
+    var cross = items.filter(function (i) { return i.x < mid - 2 && i.x + i.w > mid + 2; }).length;
+    if (cross > Math.max(2, items.length * 0.03)) return Okuyucu.parsePage(items, boxes, p);
+    var side = function (o) { return o.x + (o.w || 0) / 2 < mid ? 0 : 1; };
+    var out = { tables: [], loose: [] };
+    [0, 1].forEach(function (k) {
+      var it = items.filter(function (i) { return side(i) === k; }), bx = boxes.filter(function (b) { return side(b) === k; });
+      if (!it.length) return;
+      var r = Okuyucu.parsePage(it, bx, p);
+      out.tables = out.tables.concat(r.tables); out.loose = out.loose.concat(r.loose);
+      Object.keys(r).forEach(function (key) { if (key !== 'tables' && key !== 'loose' && !(key in out)) out[key] = r[key]; });
+    });
+    return out;
   }
   // Önceki sayfada ürün adının hemen altındaki satır (örn. "RSS Serisi" altında "TEK SERPANTİNLİ BOYLER")
   function prevSub(name) {
@@ -1130,6 +1148,8 @@
       // kaybolmasın diye sayfa görüntüsü olarak saklanabilir.
       j.reason = j.stat.textLength < 20 ? 'Belgede yazı yok: sayfalar taranmış resim. Ürünler okunamadı.' :
         'Ürün tablosu bulunamadı. Bu bir tanıtım dosyası olabilir ya da tabloları resim olarak duruyor olabilir.';
+      if (j.stat.ocrErr) j.reason += ' OCR çalışmadı: ' + j.stat.ocrErr + ' (Ayarlar > Uygulama bilgileri > "OCR motorunu dene")';
+      else if (j.stat.ocrPages) j.reason += ' ' + j.stat.ocrPages + ' sayfa OCR ile okundu ama ürün tablosu çıkmadı.';
       j.prog = 'Sayfa görüntüleri hazırlanıyor...'; drawJobs(true);
       r = await readPdf(f, { kind: 'sertifika', stat: newStat(), prog: prog });
     }
@@ -2237,6 +2257,8 @@
       ['o2', 'Okuma raporunda "OCR ile okunan sayfa" sayısı yazıyor; "OCR çalışmadı" yazmıyor'],
       ['o3', 'OCR ile okunan ürünler "OCR ile okundu, kontrol edin" uyarısıyla geldi; kod ve fiyatların çoğu doğru (yanlış örnekleri nota yazın)'],
       ['o4', 'Büyük katalogda (örn. 93 MB Seaflo) "Belge oku" dedikten sonra uygulama donmadı; başka ekranlara geçebildim'],
+      ['o8', 'Ayarlar > Uygulama bilgileri > "OCR motorunu dene": "OCR çalışıyor ✓" yazdı (yazmazsa çıkan metni nota yazın)'],
+      ['o9', 'Seaflo kataloğu: ürün kartları çıktı; model kodu (SFBP1-...), debi, volt, akım teknik özelliklerde (kaç ürün çıktığını ve süreyi nota yazın)'],
       ['o7', 'Drive\'dan büyük bir dosya (örn. 93 MB Seaflo) seçtim; "Dosya hazırlanıyor..." yazdı, sonra okuma başladı, "could not be found" hatası çıkmadı'],
       ['o6', 'Uzun okumada durum şeridinde "yaklaşık ... kaldı" yazıyor ve süre gerçeğe yakın'],
       ['o5', 'Yazısı normal olan kataloglar eskisi gibi hızlı okundu']]],
@@ -2399,6 +2421,7 @@
       '<div class="kv"><span>Kayıt alanı</span><b>' + (storeMode === 'idb' ? 'geniş veritabanı' : 'dar alan (eski yöntem)') + (pdfEngine ? ' · okuma motoru: ' + pdfEngine : '') + '</b></div>' +
       '<div class="kv"><span>Firma</span><b>HC MARIN WORKS</b></div>' +
       '<div class="row"><button class="soft" data-act="updcheck">Güncellemeyi denetle</button><span class="muted">İnternet gerekir. Yeni sürüm varsa uygulama indirir, siz yalnız "Yükle"ye basarsınız.</span></div>' +
+      '<div class="row"><button class="soft" data-act="ocrtest">OCR motorunu dene</button><span class="muted" id="ocrRes">Taranmış / yazısı resim olan katalogları okuyan motor. İnternet gerekmez.</span></div>' +
       '<div class="row"><button class="soft" data-act="ozet">Durum özetini paylaş</button><span class="muted">Belgeler, sayılar ve uyarı nedenleri (ürün bilgisi içermez)</span></div>' +
       '<div class="muted">Kayıtlar dış sunucuya gönderilmez. Veri yalnız sizin başlattığınız paylaşım ve yedekle cihazdan çıkar.</div>';
     return '<h1 class="ptitle">Ayarlar</h1>' +
@@ -2584,6 +2607,16 @@
       case 'filter': st.filter = id; render(); break;
       case 'dim': st.dim = id; st.grp = null; st.sub = null; render(true); break;
       case 'grp': st.grp = st.grp === id ? null : id; st.sub = null; drawResults(); break;
+      case 'ocrtest': {
+        var orr = $('#ocrRes'); if (orr) orr.textContent = 'Deneniyor... (ilk açılış 10-30 sn sürebilir)';
+        (window.KlavuzOcr ? KlavuzOcr.selfTest() : Promise.resolve({ ok: false, err: 'OCR dosyası yüklenmedi' })).then(function (x) {
+          var m = x.ok ? 'OCR çalışıyor ✓ · açılış ' + (x.open / 1000).toFixed(1) + ' sn, okuma ' + (x.read / 1000).toFixed(1) + ' sn · ' + x.engine
+            : 'OCR çalışmadı ✗ · ' + (x.err || ('okunan: "' + (x.text || '') + '"'));
+          var o2 = $('#ocrRes'); if (o2) o2.textContent = m; toast(m);
+          if (window.KlavuzOcr) KlavuzOcr.stop();
+        });
+        break;
+      }
       case 'addsub': {
         var inp = $('#addsub_' + id), nm = inp ? inp.value.trim() : '';
         if (!nm) { toast('Alt grup adını yazın.'); break; }

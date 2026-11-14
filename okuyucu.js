@@ -77,6 +77,14 @@
   var RE_VAT = /kdv ?li|kdv dahil|kdvli|incl/;
   var RE_SIZE = /(^|[^a-z])(dn|size|olcu[a-z]*|ebat|cap|capi|litre|hacim|nps|boyut[a-z]*|anma|nominal)([^a-z]|$)/;
   var RE_UNIT = /(^|\s)(mm|cm|inch|inc|bar|lt|kg|m)$/;
+  // Ürün adı olamayacak genel ara yazılar (katalogda tablonun hemen üstünde durur)
+  var RE_GENERIC = /^(standard|technical|teknik|specification|spesifikasyon|ozellik|configuration|included|blister|color box|colour box|ordering|order info|model|accessor|aksesuar|dimension|olcu)|configuration/;
+  // Ad gibi duran yazı: en az iki harfli sözcük, çoğu harf (OCR kırıntısı ya da ölçü yazısı değil)
+  function looksName(t) {
+    var w = String(t).split(/\s+/).filter(function (x) { return /[A-Za-zÇĞİÖŞÜçğıöşü]{3,}/.test(x); });
+    var letters = (String(t).match(/[A-Za-zÇĞİÖŞÜçğıöşü]/g) || []).length;
+    return w.length >= 2 && t.length >= 8 && t.length <= 80 && letters >= 0.5 * String(t).replace(/\s/g, '').length;
+  }
   function looksCode(v) { return /^[A-Za-z0-9][A-Za-z0-9\-\/\.]{4,}$/.test(v) && hasDigit(v) && !/^\d{1,3}(\.\d{3})+(,\d+)?$/.test(v) && !/,/.test(v); }
   function looksMoney(v) { return /^\d{1,3}(\.\d{3})*,\d{2}$/.test(v) || /^\d+,\d{2}$/.test(v); }
   function toNum(s) {
@@ -104,6 +112,8 @@
       while (n0 < rows.length) {
         var nr = rows[n0], lastD = rows[idx[idx.length - 1]];
         if (lastD.y - nr.y > 40) break;
+        // OCR'lı sayfada büyük yazılı, adla başlayan satır bir sonraki ürünün başlığıdır, bu tabloya katılmaz
+        if (OCRP && nr.h >= lastD.h * 1.3 && looksName(nr.cells[0].text)) break;
         if (isDataRow(nr)) { idx.push(n0); j = n0; coreX = Math.min(coreX, firstDigitX(nr)); n0++; continue; }
         // Birleşik hücrenin ortasına yazılmış kısa etiket (SERİ, TİP değeri) satırların arasına düşer
         if (nr.cells.length <= 2 && nr.cells.every(function (c) { return c.text.length <= 10; }) && n0 + 1 < rows.length && isDataRow(rows[n0 + 1]) && lastD.y - rows[n0 + 1].y < 40) {
@@ -277,6 +287,25 @@
           if (used[t3] || !isTitle(rows[t3].text) || rows[t3].text.length > 90) continue;
           titleRow = t3; far = true; break;
         }
+      }
+      // Büyük yazılı başlık: tablonun hemen üstünde genel bir ara yazı varsa (örn. "Standard Pump Configurations", "Blister")
+      // ya da yakında başlık yoksa, ürünün asıl adı aynı sütunda daha yukarıdaki büyük yazılı başlıktır (açıklama ve resim arada kalır).
+      var dh = median(data.map(function (r) { return r.h; }));
+      var nearT = titleRow != null ? (far ? rows[titleRow].text : textIn(rows[titleRow])) : '';
+      if (OCRP && dh > 0 && (titleRow == null || far || RE_GENERIC.test(fold(nearT)) || !looksName(nearT))) {
+        var bigT = null, bigH = 0;
+        for (var t4 = k; t4 >= 0; t4--) {
+          var r4 = rows[t4];
+          // Üstteki başka ürünün tablosuna gelince durulur; henüz tablo sayılmamış küçük ara tablolar (aksesuar listesi) atlanır
+          if ((isDataRow(r4) && used[t4]) || r4.y - topY > 520) break;
+          var c4 = r4.cells.filter(function (c) { return c.x1 > rx0 - 20 && c.x0 < rx1 + 4; }); if (!c4.length) continue;
+          var hh = Math.max.apply(null, c4.map(function (c) { return c.h; })), tx4 = c4.map(function (c) { return c.text; }).join(' ');
+          // Sayı içeren başlık ("... 01 Series (350 500 750 GPH)") veri satırı gibi görünür; büyük yazılıysa yine aday sayılır
+          if (isDataRow(r4) && !(hh >= dh * 1.3 && looksName(tx4))) continue;
+          // Ürün bloğunun en üstündeki büyük yazı seçilir (başlık üstte, açıklama maddeleri altında)
+          if (hh >= dh * 1.3 && hh <= dh * 3.2 && looksName(tx4) && isTitle(tx4) && !RE_GENERIC.test(fold(tx4)) && !used[t4]) { bigT = t4; bigH = hh; }
+        }
+        if (bigT != null) { titleRow = bigT; far = false; }
       }
       var tText = far ? function (r) { return r.text; } : textIn;
       if (titleRow != null) {
@@ -701,7 +730,9 @@
 
   // ---- Bir sayfayı oku ----
   // items: yazılar, images: [{id, x, y, w, h}] (PDF koordinatı, sol alt köşe)
+  var OCRP = false; // sayfa OCR ile okundu mu (yazı parçalarında ocr işareti)
   function parsePage(items, images, pageNo) {
+    OCRP = items.some(function (i) { return i.ocr; });
     var rows = buildRows(items), parts = [], pre = [];
     // Önce özel düzenler: ters tablo ve birleşik hücreli ızgara. Bulunan bölge sayfadan çıkarılır, kalan olağan yolla okunur.
     var sp = tersTablo(rows, pageNo);

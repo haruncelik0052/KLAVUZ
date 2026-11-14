@@ -121,5 +121,12 @@ ok(t[0].rows[0].code === '750121' && t[0].rows[0].variant === 'STOP' && t[0].row
 ok(t[0].rows[0].size === '15A' && /PCD 60/.test(t[0].rows[0].specs) && /HOLES 4X12/.test(t[0].rows[0].specs), 'ölçü ve özellikler: ' + t[0].rows[0].size + ' · ' + t[0].rows[0].specs);
 ok(t[2].rows.every((r) => /^\d{6}$/.test(r.code)), 'gri satırlardaki kodlar da okundu');
 
+console.log('OCR çıktısı: ürün bloğu (büyük başlık, açıklama, resim, ara yazı, tablo)');
+t = tables('ocr-urun-blogu.json');
+ok(t.length === 3, 'üç ürün tablosu: ' + t.length);
+ok(t.every((x) => /^Non-automatic Bilge Pumps 01 Series/.test(x.name)), 'adlar büyük yazılı başlıktan alındı, "Blister" gibi ara yazılardan değil: ' + t.map((x) => x.name).join(' | '));
+ok(t[0].rows[0].code === 'SFBP1-G350-01' && t[1].rows[0].code === 'SFBP1-G1500-01', 'model kodları doğru: ' + t[0].rows[0].code + ', ' + t[1].rows[0].code);
+ok(!t[1].rows.some((r) => /Non-automatic/.test(r.code + r.size + r.specs)), 'sonraki ürünün başlığı önceki tabloya satır olarak karışmadı');
+
 console.log(fail ? fail + ' test BAŞARISIZ' : 'Tüm testler geçti');
 process.exit(fail ? 1 : 0);

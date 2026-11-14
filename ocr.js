@@ -52,7 +52,7 @@
       var w = await limit(Tesseract.createWorker([{ code: 'tur', data: langs[0] }, { code: 'eng', data: langs[1] }], 1, {
         workerPath: abs('vendor/worker.min.js'), corePath: abs(core), workerBlobURL: false, cacheMethod: 'none', gzip: true,
         errorHandler: function (e) { info.err = String(e); }
-      }), 90000, 'OCR motoru açılırken');
+      }), 180000, 'OCR motoru açılırken');
       await w.setParameters({ tessedit_pageseg_mode: (window.KLAVUZ_TEST || {}).ocrPsm || '11', preserve_interword_spaces: '1', user_defined_dpi: String(Math.round(72 * SCALE)) });
       info.engine = 'Tesseract ' + (/simd/.test(core) ? 'SIMD' : 'temel');
       worker = w; return w;
@@ -206,5 +206,17 @@
     } finally { cv.width = cv.height = 0; }
   }
 
-  window.KlavuzOcr = { fixNum: fixNum, need: need, readPage: readPage, start: start, stop: stop, info: info };
+  // Motor denemesi: içinde bilinen yazı olan küçük bir resim okunur; süre ve sonuç döner (Ayarlar > Uygulama bilgileri)
+  async function selfTest() {
+    var t0 = Date.now(), cv = document.createElement('canvas'); cv.width = 900; cv.height = 160;
+    var g = cv.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 900, 160); g.fillStyle = '#000'; g.font = 'bold 44px sans-serif';
+    g.fillText('SFBP1-G1600 KLAVUZ 12V', 30, 100);
+    try {
+      var w = await start(), t1 = Date.now();
+      var r = await limit(w.recognize(cv), 120000, 'OCR denemesi');
+      var txt = ((r.data && r.data.text) || '').replace(/\s+/g, ' ').trim();
+      return { ok: /KLAVUZ/i.test(txt), text: txt, open: t1 - t0, read: Date.now() - t1, engine: info.engine };
+    } catch (e) { return { ok: false, err: (e && e.message) || String(e), engine: info.engine }; }
+  }
+  window.KlavuzOcr = { selfTest: selfTest, fixNum: fixNum, need: need, readPage: readPage, start: start, stop: stop, info: info };
 })();

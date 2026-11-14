@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.11.2; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
+- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.12.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -212,3 +212,12 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - Kullanıcı 0.11.1'de Seaflo (93 MB, Drive'dan seçildi) için "Okunamadı: A requested file or directory could not be found..." aldı (DOMException NotFoundError). Neden: 8 MB üstü PDF parça parça okunur (`PDFDataRangeTransport` + `file.slice`); Drive'ın `content://` adresi okuma sürerken erişimi kesebiliyor.
 - Düzeltme (MainActivity `deliverFiles`): seçilen her dosya arka planda `cacheDir/secilen/<zaman>/<i>/<asıl ad>` altına kopyalanır, WebView'e `file://` adresi verilir; kopyalanamazsa asıl adres. Kopyalama başlarken "Dosya hazırlanıyor..." (`window.KlavuzToast`). 2 günden eski kopyalar açılışta silinir (`cleanPicked`). Bu hata yine çıkarsa iş kartında sade açıklama yazar.
 - Bu ortamda Android derlenip denenemez; telefonda doğrulanmalı.
+
+## Sürüm 0.12.0 (Seaflo gibi yazısı çizime çevrilmiş, çift sayfa ürün kataloğu)
+
+- Kullanıcı Seaflo'nun kendi sitesinden indirdiği 93 MB kataloğu yükledi; ürün çıkmadı, belge yalnız sayfa görüntüsü olarak saklandı. Burada aynı sayfalar (Drive'daki `SEAFLO_2026_..._02.pdf`, 8 sayfa) OCR ile okununca 65 satır çıkıyordu; telefonda OCR büyük olasılıkla hiç çalışmadı (neden metni görünmüyordu). Telefondan "OCR motorunu dene" sonucu beklenir.
+- **Teşhis:** Ayarlar > Uygulama bilgileri > "OCR motorunu dene" (`KlavuzOcr.selfTest`: bilinen yazılı küçük resim okunur, açılış / okuma süresi ve motor yazılır). Ürün çıkmayan belgenin nedenine OCR hatası ya da "N sayfa OCR ile okundu ama tablo çıkmadı" eklenir. Motor açılış süresi sınırı 90 → 180 sn.
+- **Çift sayfa (`parseSpread`, app.js):** OCR'lı yatay sayfa (genişlik > 1,25 × yükseklik) ortadaki boşluktan ikiye bölünüp her yarı ayrı okunur (ortayı kesen yazı %3'ten azsa). Önceden sol ve sağ sayfanın aynı hizadaki tabloları birleşiyordu. Yazılı kataloglara uygulanmaz.
+- **Ürün adı (okuyucu, yalnız OCR'lı sayfada `OCRP`):** tablonun hemen üstündeki yazı genel bir ara yazıysa (`RE_GENERIC`: Standard Pump Configurations, Blister, Color Box, Technical...) ya da ad gibi değilse (`looksName`), aynı sütunda yukarıdaki, önceki ürünün tablosuna kadar olan bölgede en üstteki büyük yazılı (veri satırının ≥ 1,3 katı) satır ad olur. Sayı içeren başlık ("... 01 Series (350 500 GPH)") veri satırı gibi görünse de aday sayılır; böyle bir satır önceki tabloya satır olarak eklenmez.
+- **Ölçülen (Seaflo parça 02, 8 sayfa):** önce 65 satır / 48 kod / adların çoğu "Standard Pump Configurations", "Blister", "Ei mpm"; şimdi 90 satır / 73 kod (SFBP1-G350-01 ...), debi ölçü olarak, volt / akım / basma yüksekliği / çıkış çapı / ağırlık teknik özellik olarak; adlar çoğunlukla doğru ("Dual Port Livewell Pump", "Non-automatic Bilge Pumps 01 Series (1500 2000 GPH)", "Mechanical Auto Bilge Pumps"). Kalan zayıf yerler: sayfa 1–2'deki iç içe düzen, aksesuar tabloları (13F001 gibi kodlar kod sütunu sayılmıyor). Boss, Asel, Elif, GS değişmedi.
+- Testler: `tests/ornek/ocr-urun-blogu.json` (Seaflo sağ yarı sayfa OCR çıktısı).
