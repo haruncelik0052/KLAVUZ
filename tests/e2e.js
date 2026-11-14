@@ -274,8 +274,56 @@ async function makeCatalog(browser, file, pages) {
   await page.click('[data-act="vmark"][data-id="k1:ok"]'); await settle(page);
   ok((await stats(page)).rest.vtest.marks.k1 === 'ok', 'işaret veritabanına yazıldı');
 
+  console.log('9. Yeni düzenler: ters tablo, birleşik hücreli fiyat listesi, özellik kartı');
+  const duzen = path.join(tmp, 'duzenler.pdf');
+  {
+    const pg = await browser.newPage();
+    await pg.setContent('<style>body{font-family:Arial;font-size:11pt}table{border-collapse:collapse}td,th{border:1px solid #333;padding:5px 16px;text-align:center}td.l{text-align:left}.p{page-break-after:always}.k td{border:0;padding:6px 30px}</style>' +
+      '<div class="p"><h1>RSS Serisi</h1><div>TEK SERPANTİNLİ BOYLER</div><p>Sıcak su hazırlamaya yarayan basınçlı kaplardır.</p><img id="im" width="220" height="220"></div>' +
+      '<div class="p"><h3>RSS Serisi Teknik Özellikler</h3><table>' +
+      '<tr><td class="l">HACİM</td><td>lt</td><td>100</td><td>200</td><td>300</td><td>500</td></tr>' +
+      '<tr><td class="l">İç Çap</td><td>mm</td><td>380</td><td>480</td><td>480</td><td>640</td></tr>' +
+      '<tr><td class="l">Dış Çap</td><td>mm</td><td>480</td><td>580</td><td>580</td><td>740</td></tr>' +
+      '<tr><td class="l">Yükseklik</td><td>mm</td><td>1050</td><td>1290</td><td>1840</td><td>1820</td></tr>' +
+      '<tr><td class="l">Soğuk Su Girişi</td><td>inch</td><td colspan="2">1”</td><td colspan="2">1¼”</td></tr>' +
+      '<tr><td class="l">Tasarım Basıncı</td><td>bar</td><td colspan="4">11</td></tr></table></div>' +
+      '<div class="p"><table><tr><td style="border:0;width:90px"></td><td style="border:0" colspan="5"></td></tr>' +
+      '<tr><td class="l" colspan="6" style="border:0;font-size:14pt"><b>SANTRİFÜJ POMPA</b></td></tr>' +
+      '<tr><th></th><th>GÜÇ<br>( HP )</th><th>AĞIZ ÖLÇÜSÜ<br>( İNÇ )</th><th>BASMA</th><th>220 VOLT</th><th>380 VOLT</th></tr>' +
+      '<tr><td rowspan="4"></td><td rowspan="2">1</td><td>1"</td><td>28</td><td rowspan="2">2.500,00</td><td rowspan="2">2.400,00</td></tr><tr><td>1,5"</td><td>25</td></tr>' +
+      '<tr><td rowspan="2">2</td><td>1,5"</td><td>30</td><td rowspan="2">3.000,00</td><td rowspan="2">2.900,00</td></tr><tr><td>2"</td><td>30</td></tr>' +
+      '<tr><td></td><td>4</td><td>2"</td><td>45</td><td>****</td><td>4.200,00</td></tr></table></div>' +
+      '<div><h2 style="text-align:center">FORGED FLANGES</h2><div style="text-align:center">(Dövme Flanşlar)</div><table class="k" style="margin:10px auto">' +
+      '<tr><td>Size<br>(Ebat)</td><td>Ø 1/2" - Ø 52"</td></tr><tr><td>Standard<br>(Standart)</td><td>ASTM , DIN , ISO</td></tr>' +
+      '<tr><td>Material<br>(Malzeme)</td><td>Carbon Steel / Stainless Steel<br>(Karbon Çelik / Paslanmaz Çelik)<br>A105 , A182 F5 / F11</td></tr></table></div>');
+    await pg.evaluate(() => { const c = document.createElement('canvas'); c.width = c.height = 220; const g = c.getContext('2d'); g.fillStyle = '#c33'; g.fillRect(0, 0, 220, 220); g.fillStyle = '#36c'; g.fillRect(40, 40, 140, 140);
+      const im = document.getElementById('im'); return new Promise(r => { im.onload = r; im.src = c.toDataURL('image/png'); }); });
+    await pg.pdf({ path: duzen, format: 'A4' });
+    await pg.close();
+  }
+  await page.click('button[data-tab="katalog"]');
+  await page.fill('#brandName', 'DUZEN'); await page.fill('#supName', 'DUZEN');
+  await page.selectOption('#kind', 'katalog');
+  await page.setInputFiles('#docFile', duzen);
+  await page.click('button[data-act="read"]');
+  await page.waitForSelector('.job h3', { timeout: 30000 });
+  await page.click('.job button[data-act="save"]'); await settle(page);
+  {
+    const items = (await idbGet('items')), offers = await idbGet('offers');
+    const of = (re) => { const it = Object.values(items).find(i => i.brand === 'DUZEN' && re.test(i.name)); return it ? { it, offs: Object.values(offers).filter(o => o.itemId === it.id) } : null; };
+    const rss = of(/^RSS Serisi$/), pompa = of(/^SANTRİFÜJ POMPA$/), kart = of(/^FORGED FLANGES/);
+    ok(rss && rss.offs.length === 4 && rss.offs.map(o => o.size).join() === '100 lt,200 lt,300 lt,500 lt', 'ters tablo: her model ayrı ölçü ' + (rss ? rss.offs.map(o => o.size).join() : 'yok'));
+    ok(rss && /İç Çap 380 mm · Dış Çap 480 mm · Yükseklik 1050 mm · Soğuk Su Girişi 1” · Tasarım Basıncı 11 bar/.test(rss.offs[0].specs) && /Soğuk Su Girişi 1¼”/.test(rss.offs[2].specs), 'ters tablo: özellikler ve birleşik hücre doğru');
+    ok(rss && rss.it.sub === 'TEK SERPANTİNLİ BOYLER' && rss.it.hasImg, 'ters tablo: alt başlık ve resim önceki sayfadan alındı');
+    ok(pompa && pompa.offs.length === 9, 'ızgara: 4 satır x 2 fiyat + yalnız 380 V olan 1 satır = 9 teklif ' + (pompa ? pompa.offs.length : 'yok'));
+    const p1 = pompa && pompa.offs.find(o => o.size === '1 HP · 1,5" · 220 VOLT'), p2 = pompa && pompa.offs.find(o => o.size === '2 HP · 2" · 380 VOLT'), p3 = pompa && pompa.offs.filter(o => /^4 HP/.test(o.size));
+    ok(p1 && p1.listPrice === 2500 && p2 && p2.listPrice === 2900 && p3.length === 1 && p3[0].listPrice === 4200, 'ızgara: birleşik hücredeki fiyatlar doğru satırlarda');
+    ok(kart && kart.offs.length === 1 && kart.offs[0].size === 'Ø 1/2" - Ø 52"' && /Standart: ASTM , DIN , ISO · Malzeme: Carbon Steel/.test(kart.offs[0].specs), 'özellik kartı ürün oldu: ' + (kart ? kart.it.name + ' | ' + kart.offs[0].specs : 'yok'));
+  }
+
   ok(errors.length === 0, 'sayfada hata yok ' + JSON.stringify(errors));
   await browser.close();
+  if (process.env.KLAVUZ_KEEP) fs.copyFileSync(duzen, process.env.KLAVUZ_KEEP);
   fs.rmSync(tmp, { recursive: true, force: true });
   if (failed) { console.error('FAIL: ' + failed + ' madde başarısız'); process.exit(1); }
   console.log('Tüm uçtan uca testler geçti');

@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-9862a3e5-483rrf` dalı (sürüm 0.6.0; `ccr-2f65d271-hbxt5y` üzerine kuruldu)
+- Güncel çalışma: `ccr-1df92bb6-t62pv1` dalı (sürüm 0.7.0; `ccr-9862a3e5-483rrf` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -137,3 +137,18 @@ Kullanıcının 0.5.0 telefon sonucu: 17 / 22 işaretlendi, 16 ✓. Kurulum, ver
 - **Durum özeti:** Ayarlar > Uygulama bilgileri. Belge bazında sayı ve uyarı nedenlerini metin olarak paylaşır; yedek dosyası (onlarca MB) bu ortamda açılamadığı için uzaktan teşhiste bu kullanılır.
 
 Sıradaki iş: okunamayan düzenler (ters tablo, kodsuz özellik kartı, çift fiyat sütunlu liste, OCR). Bunun için gerçek sayfa örneği gerekir; kullanıcıdan durum özeti ve okuma raporları istenecek.
+
+## Sürüm 0.7.0 ekleri (okunamayan düzenler)
+
+Gerçek Rushwarm, Asmarine ve Eser Pompa dosyaları Drive'dan indirilip çözüldü. Üç yeni okuyucu `okuyucu.js` içinde, `parsePage` başında çalışır; bulduğu bölgeyi sayfadan çıkarır, kalan olağan yolla okunur.
+
+- **Ters tablo (`tersTablo`, `kind: 'ters'`):** ilk satır "HACİM lt 65 80 100 ..." gibi model ekseni, alt satırlar özellik. Her model bir ölçü ("65 lt"), özellikler `specs` içinde birimiyle. Birkaç modeli kapsayan birleşik hücre doğru modellere yayılır. Uygulama (`readPage`) bu ürünün fotoğrafını ve alt başlığını bir önceki sayfadan alır (`prevPage`, `prevSub`).
+- **Izgara fiyat listesi (`izgara`, `kind: 'izgara'`):** birleşik hücreli, kodsuz liste. Bölüm başlıkları ayrı ürün; birleşik sütunlar (motor gücü) ölçüye eklenir ("1 HP · 1,5\""); birden çok fiyat sütunu (220 VOLT / 380 VOLT) ayrı teklif olur; yıldızlı / boş fiyat alınmaz. Yalnız birleşik hücre varsa devreye girer; kodlu tablolar olağan yolla okunur.
+- **Özellik kartı (`kartlar`, `kind: 'kart'`):** sayfada tablo yoksa denenir. Başlık + solda etiketler (Size / Standard / Material, altında Türkçesi), sağda değerler. Ebat ölçü olur, diğerleri özellik.
+- **`spanAssign`:** üçünün ortak yardımcısı. Birleşik hücredeki değer, kapsadığı satırların (ya da sütunların) ortasına yazılır; satırlar bu kurala göre değerlere bölünür, boş hücre atlanabilir.
+- **Para birimi ayrı sütunda** (€) olan listeler doğru para birimiyle okunur; her satırda başlığını tekrar eden sütun (ADET) özellik sayılmaz.
+- Testler: `tests/ornek/` altında dört yeni örnek (ters-tablo, izgara-fiyat, ozellik-karti, para-birimi-sutunu), `tests/e2e.js` 9. adım.
+
+Ölçülen: Rushwarm 12 seri / 111 model; Asmarine 11 kart; Eser Pompa 3 ürün / 46 teklif. Boss, Asel, Elif Depo, GS Marine Valve çıktısı 0.6.0 ile birebir aynı.
+
+Sıradaki iş: telefon sonucu, sonra OCR.

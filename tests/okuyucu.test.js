@@ -64,6 +64,48 @@ ok(t.some((x) => x.name === 'REDÜKSİYON' && x.rows.length === 42), 'soldaki uz
 ok(t.some((x) => x.name === 'HORTUM REKORU AĞIR TİP' && x.rows[0].code === 'AS10101'), 'ortadaki tablo kendi adıyla');
 ok(t.every((x) => x.columns.length === 3), 'komşu tablonun sütunları karışmadı');
 
+console.log('Ters tablo (modeller sütunda, özellikler satırda)');
+t = tables('ters-tablo.json');
+ok(t.length === 1 && t[0].kind === 'ters' && t[0].rows.length === 15, 'tek ürün, 15 model');
+ok(t[0].name === 'RSS Serisi', 'ad başlıktan, "Teknik Özellikler" eki atıldı: ' + t[0].name);
+ok(t[0].rows[0].size === '65 lt' && t[0].rows[14].size === '3000 lt', 'her model ayrı ölçü: 65 lt ... 3000 lt');
+ok(/İç Çap 380 mm · Dış Çap 480 mm · Yükseklik \(± 30mm\) 800 mm/.test(t[0].rows[0].specs), 'özellikler birimiyle alındı');
+ok(/Soğuk Su Girişi 1” /.test(t[0].rows[7].specs) && /Soğuk Su Girişi 1¼” /.test(t[0].rows[8].specs), 'birleşik hücre doğru modellere yayıldı (600 lt: 1”, 800 lt: 1¼”)');
+ok(/Sirkülasyon Bağlantısı 3\/4”/.test(t[0].rows[0].specs) && /Sirkülasyon Bağlantısı 1” /.test(t[0].rows[10].specs) && /Sirkülasyon Bağlantısı 1¼”/.test(t[0].rows[14].specs), 'üç parçalı birleşik hücre doğru');
+ok(!/Temizlik Flanşı/.test(t[0].rows[0].specs) && /Temizlik Flanşı OP - 4”/.test(t[0].rows[3].specs) && /Temizlik Flanşı 5”/.test(t[0].rows[12].specs), 'boş (-) değer atlandı');
+ok(/Serpantin Yüzey Alanı 0,32 m2/.test(t[0].rows[0].specs) && /Sensör Bağlantısı OP - 100 mm/.test(t[0].rows[0].specs), 'değeri alt satıra kaymış özellikler alındı');
+
+console.log('Izgara fiyat listesi (birleşik hücre, bölüm başlıkları, iki fiyat sütunu)');
+t = tables('izgara-fiyat.json');
+ok(t.length === 3 && t.map((x) => x.name).join('|') === 'SANTRİFÜJ POMPA|JET POMPA|KADEMELİ POMPA', 'üç bölüm üç ürün: ' + t.map((x) => x.name).join(', '));
+ok(t.every((x) => x.hasPrice && !x.hasCode && x.img != null), 'fiyatlı, kodsuz, resimli');
+ok(t[0].rows.length === 32 && t[1].rows.length === 4 && t[2].rows.length === 10, 'satır sayıları 32, 4, 10');
+let r0 = t[0].rows;
+ok(r0[0].size === '1 HP · 1"' && r0[0].variant === '220 VOLT' && r0[0].price === 2500 && r0[1].variant === '380 VOLT' && r0[1].price === 2400, 'motor gücü ölçüye eklendi; 220 V ve 380 V ayrı teklif');
+ok(r0[4].size === '1 HP · 2"' && r0[4].price === 2500 && r0[6].size === '1,5 HP · 1,5"' && r0[6].price === 2750, 'birleşik hücredeki güç ve fiyat doğru satırlara yayıldı');
+ok(r0[10].size === '1,5 HP · 3*2,5"' && r0[10].price === 2900 && r0[22].size === '3 HP · 2"' && r0[22].price === 3600, 'ara fiyat grupları doğru');
+ok(!r0.some((r) => /^0,5 HP/.test(r.size)) && r0[28].size === '4 HP · 2"' && r0[28].variant === '380 VOLT' && r0[28].price === 4200, 'fiyatı yıldızlı (*****) seçenekler alınmadı');
+ok(r0[0].specs === 'AL.VER YÜKSEKLİK 28 · TON SAAT 7', 'diğer sütunlar özellik: ' + r0[0].specs);
+
+console.log('Özellik kartı (kodsuz, fiyatsız tanıtım sayfası)');
+t = tables('ozellik-karti.json');
+ok(t.length === 2 && t.every((x) => x.kind === 'kart' && x.rows.length === 1), 'iki kart');
+ok(t[0].name === 'INDUSTRIAL VALVES (Endüstriyel Vanalar)' && t[1].name === 'FASTENERS (Bağlantı Elemanları)', 'adlar: ' + t.map((x) => x.name).join(' | '));
+ok(t[0].rows[0].size === 'Ø 1/2" - Ø 52"', 'ebat ölçü olarak alındı');
+ok(/^Açıklama: Gate .*Vanaları\) · Standart: ASTM , DIN , ISO , EN , BS · Malzeme: Carbon Steel/.test(t[0].rows[0].specs), 'etiketler ve çok satırlı değerler eşlendi');
+ok(/^Studbolts/.test(t[1].sub) && /Kalite: A193 B7 \/ A194 2H$/.test(t[1].rows[0].specs), 'etiketsiz giriş yazısı alt başlık oldu; son etiket doğru');
+ok(t[0].img != null && t[1].img != null && t[0].img !== t[1].img, 'her karta kendi resmi bağlandı');
+
+console.log('Para birimi ayrı sütunda (€)');
+t = tables('para-birimi-sutunu.json');
+ok(t.length === 1 && t[0].rows.length === 6 && t[0].name === 'MARİN BOYLER', 'tek tablo, 6 satır');
+ok(t[0].rows[0].code === 'RMB 30' && t[0].rows[0].cur === 'EUR' && t[0].rows[0].price === 224, 'kod, fiyat ve para birimi (EUR) doğru');
+ok(t[0].rows[0].specs === '', 'para birimi ve tekrar eden ADET sütunu özellik sayılmadı');
+
+console.log('Birleşik hücre yayma');
+ok(O.spanAssign([10, 20, 30, 40, 50], [15, 40], 3).join() === '0,0,1,1,1', 'iki değer beş satıra ortalanarak yayıldı');
+ok(O.spanAssign([10, 20, 30, 40], [25, 40], 3).join() === '-1,0,0,1' || O.spanAssign([10, 20, 30, 40], [25, 40], 3).join() === '0,0,0,1', 'boş hücre atlanabilir');
+
 console.log('Sertifika tanıma');
 const c = load('sertifika.json');
 ok(O.looksLikeCertificate(c.text, c.pageCount) === true, 'sertifika belgesi tanındı');

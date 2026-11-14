@@ -1,17 +1,18 @@
 # Klavuz — sonraki sürüm için devir ve istek listesi
 
-## GÜNCEL DEVİR (0.6.0, 14.11.2026) — önce burayı okuyun
+## GÜNCEL DEVİR (0.7.0, 14.11.2026) — önce burayı okuyun
 
-- **Dal:** `ccr-9862a3e5-483rrf` (son sürüm 0.6.0). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
+- **Dal:** `ccr-1df92bb6-t62pv1` (son sürüm 0.7.0; `ccr-9862a3e5-483rrf` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
 - **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Öncelik verimli uygulama; ince ayar kullandıkça yapılır.
 - **APK teslimi:** Kullanıcı GitHub'dan indirmek istemiyor. Her sürümde APK sohbetin içinde dosya olarak verilir: push sonrası derleme bitince (yaklaşık 1,5 dk)
   `curl -sSL -o apk/Klavuz-<sürüm>.apk https://github.com/haruncelik0052/KLAVUZ/releases/download/test-<commit7>/Klavuz-<commit7>.apk`
   ile indirilir ve dosya gönderme aracıyla (SendUserFile) kullanıcıya iletilir. `apk/` klasörü depoya girmez.
 - **Test:** `node tests/okuyucu.test.js`; `python3 -m http.server 8080` sonra `node tests/e2e.js`. İkisi de geçmeden gönderme.
+- **Gerçek kataloglarla deneme (yeni, çok işe yarar):** Drive bağlayıcısının `download_file_content` aracı 10 MB altı PDF'i bu ortama **dosya olarak** indirir (çıktıda "saved to ..." yolu yazar). Depodaki `vendor/pdf.min.js` node içinde çalışır; sayfa yazı ve resim konumları uygulamanın gördüğü biçimde çıkarılıp `Okuyucu.parsePage` ile denenir. Her okuyucu değişikliğinden önce ve sonra Boss, Asel, Elif Depo, GS Marine Valve kataloglarının çıktısı karşılaştırılır (0.7.0'da 209 sayfada fark sıfır). Gerçek PDF depoya konmaz; `tests/ornek/` altına yalnız sayfa konumları, fiyatlar değiştirilerek girer.
 - **Telefonda doğrulananlar (0.5.0):** üstüne kurulum ve veri taşıma, çoklu ve arka planda okuma, yarım kalan okumaya devam, kategori, marka kartı, 31 MB yedek, geri tuşu.
-- **Telefonda bekleyenler:** 0.6.0'ın tamamı (yeniden okuma, otomatik kontrol, fiyatsız katalog, teklif dosyası, internetten paylaşım), 10 MB üstü katalog ve okuma hızı.
-- **Sıradaki iş:** 1) kullanıcının 0.6.0 sonucu ve "Durum özeti" metnine göre düzeltmeler; 2) okunamayan düzenler: ters tablo (Rushwarm), kodsuz özellik kartı (Asmarine), çift fiyat sütunlu kodsuz liste (Eser Pompa), OCR; 3) TeklifX içe aktarma biçimi öğrenilince teklif dosyasını ona uydurma; 4) karşılaştırma ekranı, ekran düzeni, isteğe bağlı Drive bağlantısı.
-- **Sınır:** Drive'daki PDF'ler ve yedek dosyası bu ortama indirilemiyor (yalnız metin okunur). Okuyucu hataları için kullanıcıdan okuma raporu ve durum özeti istenir.
+- **Telefonda bekleyenler:** 0.6.0'ın tamamı (yeniden okuma, otomatik kontrol, fiyatsız katalog, teklif dosyası, internetten paylaşım), 0.7.0'ın yeni düzenleri, 10 MB üstü katalog ve okuma hızı.
+- **Sıradaki iş:** 1) kullanıcının 0.6.0 / 0.7.0 telefon sonucu ve "Durum özeti" metnine göre düzeltmeler; 2) OCR (taranmış PDF: Vamates; tabloları resim olan katalog: Flowmaster) — telefonda, internetsiz; 3) Drive'daki öbür katalogları tek tek okuyucudan geçirip okunamayan düzenleri çıkarmak; 4) TeklifX içe aktarma biçimi öğrenilince teklif dosyasını ona uydurma; 5) karşılaştırma ekranı, ekran düzeni, isteğe bağlı Drive bağlantısı.
+- **Sınır:** 10 MB üstü Drive dosyaları (Hisar 2026, ECA, BOSSFIYAT-LISTESI) ve yedek dosyası bu ortama indirilemiyor. Bunlar için kullanıcıdan okuma raporu ve durum özeti istenir.
 - Ayrıntılı teknik geçmiş `DEVIR.md` içindedir. Aşağısı eski istek listesidir; 1–16 arası isteklerin çoğu karşılandı.
 
 > **Güncel durum (0.4.0):** İnceleme yapıldı, plan kullanıcıca onaylandı. 0.4.0 ile şu istekler karşılandı: 1 (çoklu belge), 2 (arka planda okuma), 3 (kendiliğinden parçalama), 4 (hız, kısmen), IndexedDB'ye taşıma, geri tuşu, 5'in ilk adımı (dosya seçicide Drive). Ayrıntı `DEVIR.md` sonunda.

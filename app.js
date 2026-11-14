@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.6.0';
+  var APP_VERSION = '0.7.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -452,9 +452,10 @@
   // Sertifika / onay yazıları ürün olarak okunmaz, sayfa görüntüsü olarak saklanır.
   // Sayfalar tek tek işlenir ve bırakılır; her CHUNK sayfada bir o.chunk ile ara kayıt yapılır.
   // o: { kind, force, start, stat, prog(p, n, ne), chunk(parça, sonrakiSayfa), stop() }
-  var CHUNK = 20;
+  var CHUNK = 20, prevPage = null; // prevPage: bir önceki sayfanın başlıkları ve resmi (teknik tablo sayfasının tanıtım sayfası)
   async function readPdf(file, o) {
     var pdf = await openPdf(file), OPS = pdfjsLib.OPS, n = pdf.numPages, stat = o.stat, p;
+    prevPage = null;
     stat.pageCount = n;
     try {
       if (o.kind === 'sertifika') return { cert: true, pages: await pageShots(pdf, o.prog) };
@@ -527,12 +528,20 @@
       // Ancak adı, resmi ve satırlarının çoğunda ölçüsü varsa ürün sayılır: fiyatsız / kodsuz kataloglar da kart olur.
       var sized = t.rows.filter(function (r) { return r.size; }).length;
       var plain = !t.hasCode && !t.hasPrice;
-      if (plain && !(t.name && !t.guess && (t.imgs || []).length && sized >= Math.max(1, t.rows.length * 0.6))) { stat.infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
+      // Ters tablo (modeller sütunda) ve özellik kartı kendi düzeniyle tanındığı için adı varsa ürün sayılır.
+      var special = t.kind === 'ters' || t.kind === 'kart';
+      if (plain && (special ? !t.name : !(t.name && !t.guess && (t.imgs || []).length && sized >= Math.max(1, t.rows.length * 0.6)))) { stat.infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
       stat.tableCount++;
       // Resim: adaylar içinde fotoğrafı teknik çizime tercih et (çizim çoğunlukla beyazdır)
       var pick = null;
       (t.imgs || []).forEach(function (id) { if (urls[id] && (pick == null || inks[id] > inks[pick] * 1.3)) pick = id; });
       if (pick != null) usedPick[pick] = true;
+      var imgUrl = pick != null ? urls[pick] : null;
+      // Teknik tablo çoğunlukla ürünün tanıtım sayfasının arkasındadır: fotoğraf ve alt başlık önceki sayfadan alınır
+      if (t.kind === 'ters' && prevPage && prevPage.p === p - 1) {
+        if (prevPage.img && (!imgUrl || prevPage.ink > (inks[pick] || 0) * 1.3)) imgUrl = prevPage.img;
+        if (!t.sub) t.sub = prevSub(t.name);
+      }
       t.rows.forEach(function (r) {
         var warn = null;
         if (!t.name) warn = 'ürün adı bulunamadı';
@@ -540,10 +549,10 @@
         else if (t.hasCode && !r.code) warn = 'kod okunamadı';
         else if (t.hasPrice && r.price == null) warn = 'fiyat okunamadı';
         else if (!r.size && !r.code) warn = plain ? null : 'ölçü okunamadı';
-        if (plain && !r.size) return;
+        if (plain && !special && !r.size) return;
         rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '',
           size: (r.size + (r.variant ? ' · ' + r.variant : '')).trim(), price: r.price, cur: r.cur,
-          priceVat: r.priceVat, specs: r.specs, img: pick != null ? urls[pick] : null, page: p, warn: warn });
+          priceVat: r.priceVat, specs: r.specs, img: imgUrl, page: p, warn: warn });
       });
     });
     // Tablo dışında kalan, kodu ve fiyatı aynı satırda olan ürünler
@@ -565,6 +574,20 @@
       });
       if (best && bd < 220) best.img = urls[b.id];
     });
+    var top = null;
+    boxes.forEach(function (b) { if (urls[b.id] && (top == null || (inks[b.id] || 0) > (inks[top] || 0))) top = b.id; });
+    prevPage = { p: p, lines: res.loose, img: top != null ? urls[top] : null, ink: top != null ? inks[top] || 0 : 0 };
+  }
+  // Önceki sayfada ürün adının hemen altındaki satır (örn. "RSS Serisi" altında "TEK SERPANTİNLİ BOYLER")
+  function prevSub(name) {
+    var f = fold(name), ls = (prevPage && prevPage.lines) || [], hit = null, best = null;
+    if (!f) return '';
+    ls.forEach(function (l) { if (!hit && fold(l.text) === f) hit = l; });
+    if (!hit) return '';
+    ls.forEach(function (l) {
+      if (l.y < hit.y && hit.y - l.y < 60 && l.text.length >= 4 && l.text.length <= 60 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3}/.test(l.text) && (!best || l.y > best.y)) best = l;
+    });
+    return best ? Okuyucu.fixI(best.text) : '';
   }
   // PDF içindeki resim nesnesini al
   function imgObject(page, name) {
@@ -1571,6 +1594,13 @@
       ['o1', 'Uyarılar ekranında "Otomatik kontrol et" uyarı sayısını düşürdü'],
       ['o2', 'Otomatik doğrulanan ürünler doğru görünüyor (yanlış olan varsa nota yazın)'],
       ['o3', 'Elle kontrole kalanlar gerçekten bakılması gerekenler']]],
+    ['Yeni okunan düzenler', [
+      ['d1', 'Modelleri yan yana sütunlarda olan teknik tablo (örn. boyler kataloğu): her model ayrı ölçü olarak, özellikleriyle geldi'],
+      ['d2', 'Bu ürünlerde fotoğraf ve alt başlık bir önceki tanıtım sayfasından alındı'],
+      ['d3', 'Birleşik hücreli fiyat listesi (örn. pompa listesi): fiyatlar doğru satırlara geldi; 220 V / 380 V gibi iki fiyat ayrı seçenek oldu'],
+      ['d4', 'Kodu ve fiyatı olmayan tanıtım kataloğu: her ürün başlığı, özellikleriyle bir kart oldu'],
+      ['d5', 'Para birimi ayrı sütunda yazan liste doğru para birimiyle (€ / $) geldi'],
+      ['d6', 'Daha önce doğru okunan kataloglarım yeniden okununca bozulmadı']]],
     ['Fiyatsız katalog ve elle ürün', [
       ['f1', 'Fiyat olmayan bir katalogdaki ürünler kart olarak eklendi'],
       ['f2', '"Elle ürün ekle" ile ürün ekleyebildim']]],
