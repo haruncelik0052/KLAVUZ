@@ -44,7 +44,9 @@
     if (starting) return starting;
     starting = (async function () {
       if (typeof Tesseract === 'undefined') await loadScript('vendor/tesseract.min.js');
-      var langs = await Promise.all([loadBin('vendor/tur.traineddata.gz'), loadBin('vendor/eng.traineddata.gz')]);
+      // Android paketleyicisi .gz dosyalarını açıp uzantısını siler (APK içinde "tur.traineddata"); ikisi de denenir
+      var lang = function (c) { return loadBin('vendor/' + c + '.traineddata.gz').catch(function () { return loadBin('vendor/' + c + '.traineddata'); }); };
+      var langs = await Promise.all([lang('tur'), lang('eng')]);
       var core = simd() ? 'vendor/tesseract-core-simd-lstm.wasm.js' : 'vendor/tesseract-core-lstm.wasm.js';
       var w = await limit(Tesseract.createWorker([{ code: 'tur', data: langs[0] }, { code: 'eng', data: langs[1] }], 1, {
         workerPath: abs('vendor/worker.min.js'), corePath: abs(core), workerBlobURL: false, cacheMethod: 'none', gzip: true,

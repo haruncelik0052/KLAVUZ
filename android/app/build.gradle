@@ -10,8 +10,8 @@ android {
         applicationId 'com.hcmarinworks.klavuz'
         minSdk 24
         targetSdk 34
-        versionCode 10
-        versionName '0.10.0'
+        versionCode 11
+        versionName '0.10.1'
     }
 
     // Test APK'ları hep aynı anahtarla imzalanır; böylece yeni sürüm eskisinin üstüne kurulur, veriler silinmez.

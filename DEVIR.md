@@ -186,3 +186,4 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - **Okuyucu:** fiyatsız tabloda iki kod sütunu (CODE STOP / CODE SDNR) artık iki ayrı seçenek (`variant`); önceden ikinci kod kayboluyordu.
 - Testler: `tests/ornek/ocr-cizgi-yazi.json` (Flowmaster sayfa 6'nın gerçek + OCR yazı konumları; fiyat yok), `tests/e2e.js` 15. adım (tablo resme çevrilip yalnız resim içeren PDF yapılır, OCR ile okunur).
 - Test kancası: `window.KLAVUZ_TEST.api = { readPdf, newStat }`; `KLAVUZ_TEST.ocrPsm`, `ocrConf`, `ocrDump` (temizlenmiş sayfa resmi) yalnız denemelerde.
+- **0.10.1:** Android paketleyicisi (aapt) `vendor/*.gz` dosyalarını açıp uzantısını siler (APK'da `tur.traineddata`). `ocr.js` önce `.gz`, olmazsa uzantısız dosyayı okur. APK'nın `assets/` klasörü `file://` adresiyle ve `--allow-file-access-from-files` ile Chromium'da açılarak OCR denendi, çalıştı. 0.10.0 derlemesi telefonda OCR yapamazdı; kullanıcıya verilmedi.
