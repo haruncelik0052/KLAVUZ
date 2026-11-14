@@ -15,10 +15,53 @@
 - **0.8.0'da çalışmayan:** Hepsiburada paylaşımı bilgiyi kendiliğinden almadı (görünmeyen tarayıcı; neden bilinmiyor, büyük olasılıkla sitenin robot koruması). Amazon paylaşımı denenmedi.
 - **Kullanıcının 0.8.0 istekleri ve 0.9.0'da yapılan:** (1) "tarayıcı uygulamanın içinde açılsın, bir düğmeyle ürünleri alsın" → uygulama içi tarayıcı + "Klavuz'a al" (tek ürün ya da sayfadaki liste); (2) "bir kategoriyi olduğu gibi çekebilir miyim" → ekranda açık olan liste sayfası tek dokunuşla alınır; **sayfaları kendiliğinden gezip bütün kategoriyi indiren tarama yapılmadı ve yapılmayacak** (siteler toplu otomatik çekmeyi yasaklıyor ve engelliyor; kullanıcıya böyle söylendi); (3) "zip verince açsın" → ZIP desteği; (4) "kategori sistemi Amazon'unki gibi olsun" → **yapılmadı, sıradaki iş**: iki kademeli kategori ağacı (ana grup > alt grup), internetten alınan üründe sitenin kırıntı yolu (breadcrumb) ipucu olarak kullanılabilir. Amazon'un kategori ağacı birebir kopyalanmaz; tekne teknik malzemesine uygun ağaç kurulur.
 - **Telefonda bekleyenler:** 0.9.0'ın tamamı; özellikle (a) uygulamanın kendini 0.8.0'dan 0.9.0'a güncellemesi (ilk gerçek deneme), (b) uygulama içi tarayıcıda Amazon / Hepsiburada sayfasından alma (site düzenleri burada denenemedi; yalnız örnek HTML ile test edildi).
-- **Sıradaki iş:** 1) 0.9.0 telefon sonucu: tarayıcıdan alma hangi sitede ne kadar tuttu, ona göre `extractList` / `extractProduct` ayarı (kullanıcıdan sitenin adını ve kaç ürün geldiğini iste); 2) iki kademeli kategori ağacı; 3) OCR — Tesseract.js (Apache 2.0) telefonda, internetsiz; 4) Drive'daki öbür katalogları okuyucudan geçirmek; 5) TeklifX içe aktarma biçimi.
+- **Sıradaki iş:** aşağıdaki "YAPILACAK İŞLER" bölümü, sırasıyla.
 - **Görünüm kararı:** Kullanıcı Amazon'u yoğun kullanıyor ve benzer düzen istedi. Düzen ve kullanım mantığı alışveriş uygulaması gibidir (üstte arama, resimli kutular, kart ızgarası, yatay şeritler); Amazon'un adı, logosu ve birebir görünümü kopyalanmaz.
 - **Sınır:** 10 MB üstü Drive dosyaları ve yedek dosyası bu ortama indirilemiyor.
 - Ayrıntılı teknik geçmiş `DEVIR.md` içindedir. Aşağısı eski istek listesidir; 1–16 arası isteklerin çoğu karşılandı.
+
+## YAPILACAK İŞLER (0.9.0 sonrası, sırasıyla)
+
+Her iş ayrı sürüm numarasıyla çıkar (`APP_VERSION`, `versionName`, `versionCode`, `sw.js` CACHE birlikte artar); aksi halde uygulamanın kendi güncellemesi yeni sürümü görmez. Kullanıcıya seçim sorulmaz.
+
+### 1. 0.9.0 telefon sonucu (önce bu)
+Kullanıcı sonucu ayrıca gönderecek. Bakılacaklar:
+- **Kendini güncelleme** ilk kez gerçekten denendi mi (0.8.0 içinden 0.9.0'a)? Takıldıysa nerede: kutu çıkmadı / indirmedi / kurulum ekranı açılmadı / izin döngüsü. Kod: `checkUpdate`, `installUpdate`, `downloadTo` (MainActivity.java), `KlavuzUpdate` (app.js).
+- **Uygulama içi tarayıcı:** hangi sitede "Klavuz'a al" kaç ürün getirdi, ad / fiyat / resim eksik mi. Gerçek Amazon ve Hepsiburada sayfaları bu ortamda denenemedi. Eksik çıkarsa kullanıcıdan sitenin adını ve sayfanın türünü (ürün / arama / kategori) iste; `extractProduct` ve `extractList` o siteye göre ayarlanır. Gerekirse tarayıcıya "sayfanın HTML'ini paylaş" gibi bir teşhis düğmesi eklenip örnek alınır.
+- **ZIP** ve **CSV Türkçe harf** telefonda çalıştı mı.
+- Hâlâ bekleyen: kullanıcıdan **"Durum özeti"** metni (Ayarlar > Uygulama bilgileri) ve yanlış otomatik doğrulanan ürün adları hiç gelmedi. 0.8.0'da "otomatik doğrulananlar doğru" işaretlendi; yine de özet gelirse uyarı nedenlerine bakılır.
+
+### 2. OCR: taranmış ve tabloları resim olan kataloglar
+Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (Apache 2.0)**. Yavaş olabilir; arka planda, parça parça.
+- **Örnek belgeler (Drive):** Vamates (tamamı taranmış PDF), Flowmaster (tabloları resim). Drive'da adla aranıp `download_file_content` ile indirilir (10 MB altıysa). Önce burada node ile denenir.
+- **Ne zaman devreye girer:** sayfada yazı yok ya da çok az (`items.length < 5`; şu an `stat.emptyPages` sayılıyor) ve sayfada büyük resim varsa. Yazısı olan sayfaya OCR yapılmaz. Belge raporunda "OCR ile okunan sayfa: N" yazsın.
+- **Nasıl:** sayfa `page.render` ile tuvale çizilir (ölçek 2–3, yaklaşık 200–300 dpi), Tesseract `tur+eng` ile okunur. Tesseract sözcükleri kutularıyla verir (`words[].bbox`); bunlar okuyucunun beklediği biçime çevrilir: `{str, x, y, w, h}` (PDF koordinatı: y yukarı doğru artar, yani `y = sayfaYüksekliği - bbox.y1 / ölçek`). Sonra **aynı `Okuyucu.parsePage` çalışır**; ayrı bir tablo mantığı yazılmaz.
+- **Dosyalar (hepsi uygulamanın içine konur, internetten indirilmez):** `vendor/tesseract.min.js`, `vendor/worker.min.js`, `vendor/tesseract-core*.wasm.js` (SIMD'li ve SIMD'siz), `vendor/tur.traineddata.gz`, `vendor/eng.traineddata.gz` ("fast" modelleri: toplam yaklaşık 5–8 MB; "best" modelleri çok büyük, kullanılmaz). `createWorker` çağrısında `workerPath`, `corePath`, `langPath` yerel yollar verilir, `gzip: true`. `.github/workflows/build-apk.yml` zaten `vendor/` klasörünü kopyalıyor. APK yaklaşık 4 MB'tan 12–15 MB'a çıkar; kullanıcıya söylenir.
+- **Dikkat:** (a) WebView `file://` altında Worker ve wasm yüklemesi: pdf.js worker'ı çalışıyor (`setAllowFileAccessFromFileURLs(true)`), Tesseract'ın `fetch` ile wasm / traineddata okuması `file://` altında takılabilir; takılırsa dosyalar `XMLHttpRequest` / `blob:` adresiyle verilir ya da Android'de `WebViewAssetLoader` ile `https://appassets.androidplatform.net/` altından sunulur (bu durumda IndexedDB kökeni değişir; **veri kaybı olmaması için köken değiştirilmeden çözülmeli**, önce blob yolu denenir). (b) Bellek: sayfa sayfa işlenir, tuval ve sonuç her sayfadan sonra bırakılır; tek worker. (c) Hız: sayfa başına 5–20 sn beklenir; ilerleme durum şeridinde "OCR sayfa 3 / 40" diye görünür; yarım kalırsa mevcut "kaldığı yerden devam" düzeni kullanılır (`CHUNK`, `o.chunk`). (d) Doğruluk: OCR'dan gelen her satır `warn: 'OCR ile okundu, kontrol edin'` ile işaretlenir ve `autoCheck` bunu kendiliğinden kapatmaz; fiyat ve kodda O/0, I/1, virgül / nokta karışabilir. (e) Tablonun yalnız bir bölümü resimse (Flowmaster): sayfadaki büyük resim kutuları ayrı ayrı OCR'lanıp sözcükler sayfa koordinatına taşınır, sayfanın gerçek yazılarıyla birleştirilir.
+- **Test:** `tests/ornek/` altına OCR çıktısından üretilmiş bir sayfa konumu örneği (fiyatlar değiştirilerek); `tests/e2e.js` içinde tarayıcıda yazısı resim olan küçük bir PDF üretilip OCR ile okunduğu denenir (Playwright Chromium'da Tesseract.js çalışır).
+- Sürüm testi maddeleri: taranmış katalog okundu mu, süre, yanlış okunan fiyat / kod örnekleri.
+
+### 3. İki kademeli kategori ağacı (kullanıcı isteği: "Amazon'un kategori sistemi gibi")
+- Şu an tek kademe: `CATS` (22 grup, anahtar sözcüklerle), `classify`, `autoCat`, `item.category`, `item.cat2`, öğrenme `db.learn`.
+- Yapılacak: ana grup > alt grup (örn. Vana > Küresel vana / Çek valf / Kelebek vana; Pompa > Sintine / Tatlı su / Santrifüj; Rakor ve bağlantı > Nipel / Dirsek / Manşon). Ana sayfada ana gruplar kutu olarak, içine girince alt gruplar. `item.category` alt grubun kimliğini tutar, ana grup ondan türetilir; eski 22 kimlik ana grup olarak geçerli kalır (**veri taşıma gerekmeden**).
+- İnternetten alınan üründe sitenin kırıntı yolu (JSON-LD `BreadcrumbList`, Amazon `#wayfinding-breadcrumbs_feature_div`) kategori ipucu olarak kullanılır.
+- Amazon'un ağacı birebir kopyalanmaz; tekne teknik malzemesine uygun ağaç kurulur. Kullanıcı ağacı uygulamada düzeltebilmeli (ad değiştir, alt grup ekle).
+
+### 4. Drive'daki öbür kataloglar
+`05_MARKA_PROFILLERI` altında yaklaşık 50 marka klasörü var. Katalogları tek tek indirip (10 MB altı) okuyucudan geçir, okunamayan düzenleri çıkar, en çok ürün kazandıranı önce düzelt. Her değişiklikte Boss, Asel, Elif Depo, GS Marine Valve, Rushwarm, Asmarine, Eser Pompa çıktısı öncekiyle karşılaştırılır.
+
+### 5. Daha sonra
+- TeklifX içe aktarma biçimi öğrenilince teklif dosyasını (`cartCsv`) ona uydurma.
+- Tablette iki bölmeli düzen (solda liste, sağda ürün).
+- Ürün karşılaştırma ekranı (iki üç ürün yan yana).
+- İsteğe bağlı Google Drive bağlantısı ve Drive'a yedek (Google tarafında kurulum ister; kullanıcı isterse, adım adım).
+- Yayın sayısı 100'e yaklaşınca eski test yayınlarını silme (güncelleme denetimi ilk 100 yayına bakıyor).
+- Arama hızı: ürün sayısı on binleri geçerse MiniSearch (MIT) ile dizin.
+
+### Yapılmayacak (karar)
+- Bir sitenin kategorisini sayfa sayfa kendiliğinden gezip toplu indiren tarama. Uygulama yalnız ekranda açık olan sayfayı, kullanıcı düğmeye basınca okur.
+- Amazon'un adını, logosunu, birebir görünümünü ya da kategori ağacını kopyalama.
+- İnternet olmadan çalışmayan zorunlu özellik. İnternet isteyen her iş (tarayıcı, güncelleme, paylaşım) ektir.
 
 > **Güncel durum (0.4.0):** İnceleme yapıldı, plan kullanıcıca onaylandı. 0.4.0 ile şu istekler karşılandı: 1 (çoklu belge), 2 (arka planda okuma), 3 (kendiliğinden parçalama), 4 (hız, kısmen), IndexedDB'ye taşıma, geri tuşu, 5'in ilk adımı (dosya seçicide Drive). Ayrıntı `DEVIR.md` sonunda.
 > **Onaylanan sıra:** 0.5.0 marka / satıcı / kategori (Drive'daki `05_MARKA_PROFILLERI` altında 50 marka klasörü var; marka listesi bu adlarla başlatılabilir) → 0.6.0 okunamayan düzenler (ters tablo, kodsuz özellik kartı, çift fiyat sütunlu kodsuz liste örn. Eser Pompa, OCR) → 0.7.0 görünüm, karşılaştırma, tarifle arama, isteğe bağlı Drive bağlantısı.
