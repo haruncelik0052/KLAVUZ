@@ -227,7 +227,8 @@
       priceC = priceCols.length ? priceCols[0] : -1;
       // Aynı tabloda birden çok kod + fiyat çifti (örn. TAKIM ve GÖVDE): her çift ayrı tekliftir
       var pairs = [];
-      if (codeCols.length >= 2 && priceCols.length >= 2) {
+      // Fiyatsız tabloda iki kod sütunu (örn. CODE STOP / CODE SDNR): her kod ayrı seçenektir
+      if (codeCols.length >= 2 && (priceCols.length >= 2 || (!priceCols.length && vatC < 0))) {
         codeCols.forEach(function (cc, i) {
           var next = i + 1 < codeCols.length ? codeCols[i + 1] : cols.length;
           var pc = priceCols.filter(function (x) { return x > cc && x < next; })[0];

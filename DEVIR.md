@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-1df92bb6-t62pv1` dalı (sürüm 0.9.0; `ccr-9862a3e5-483rrf` üzerine kuruldu)
+- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.10.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -18,7 +18,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 - `tests/e2e.js`: Playwright ile uçtan uca test. `tests/katalog.pdf` örnek belge
 - `README.md`: kullanım ve bilinen sınırlar
 
-Not: Workflow `index.html app.js okuyucu.js manifest.json icon.svg` dosyalarını ve `vendor/` klasörünü APK'ya kopyalar. Yeni bir web dosyası eklenirse workflow'a da eklenmeli.
+Not: Workflow `index.html app.js okuyucu.js ocr.js manifest.json icon.svg` dosyalarını ve `vendor/` klasörünü APK'ya kopyalar. Yeni bir web dosyası eklenirse workflow'a da eklenmeli.
 
 ## Test ve APK yayını
 
@@ -173,3 +173,16 @@ Telefonda doğrulanmadı: görünmeyen WebView ile Amazon sayfası okuma, APK in
 - Testler: `tests/e2e.js` 13 (ZIP) ve 14 (tarayıcıdan alma).
 
 Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfayı, kullanıcı düğmeye basınca okur; sayfaları kendiliğinden gezmez.
+
+## Sürüm 0.10.0 ekleri (OCR: taranmış ve yazısı çizgiye çevrilmiş kataloglar)
+
+- **Motor:** Tesseract.js 7.0.0 (Apache 2.0), tamamen uygulamanın içinde: `vendor/tesseract.min.js`, `vendor/worker.min.js`, `vendor/tesseract-core-simd-lstm.wasm.js` (SIMD yoksa `tesseract-core-lstm.wasm.js`), `vendor/tur.traineddata.gz`, `vendor/eng.traineddata.gz` (4.0.0_best_int, LSTM). Toplam yaklaşık 13 MB; APK büyüdü. İnternetten hiçbir şey indirilmez (e2e testi dış adresleri engelleyerek çalışır).
+- **`worker.min.js` yaması:** tesseract.js 7.0.0'da dil verisi `{ code, data }` olarak verilince `initialize` dil adı yerine veriyi kullanıyordu; `t.data` → `t.code` (bkz. `vendor/TESSERACT-LICENSE.txt` sonu). Kütüphane güncellenirse bu yama yeniden yapılmalı ya da hatanın düzelip düzelmediği denetlenmeli.
+- **Yükleme (`ocr.js`):** Tesseract betiği ilk gerektiğinde yüklenir. Dil dosyaları `XMLHttpRequest` ile okunur (`file://` altında `fetch` çalışmaz), worker `workerBlobURL: false` ile doğrudan dosyadan açılır, `cacheMethod: 'none'`. Açılış 90 sn, sayfa okuması 180 sn zaman sınırlı; aşılırsa OCR o belge için kapanır, raporda "OCR çalışmadı: <neden>" yazar, okuma kalan sayfalarla sürer. Belge bitince worker kapatılır (bellek).
+- **Ne zaman:** `KlavuzOcr.need(yazıSayısı, eğriSayısı)`: sayfada 5'ten az yazı varsa (taranmış) ya da yazılar çizgiye çevrilmişse (eğri > 3000 ve eğri > 50 × yazı; Flowmaster ve Vamates böyle: tablo yazıları seçilemeyen çizim). Normal kataloglarda yalnız boş / kapak sayfaları OCR'lanır (Boss 7, Asel 5, GS 5 sayfa; çıktı değişmez).
+- **Nasıl:** sayfa ölçek 3 (216 dpi) çizilir; `prep` resmi temizler: renkli zemin beyaz, renkli zemindeki beyaz yazı siyah, beyaz zemindeki renkli yazı siyah, açık gri satır zemini beyaz; uzun yatay / dikey tablo çizgileri silinir (çizgiler OCR'ın gri satırlardaki hücreleri kaçırmasına yol açıyordu). PSM 11 (dağınık yazı) en iyi sonucu verdi (Flowmaster 6–21: 311 / 336 kod; PSM 6: 267, PSM 3: 286). Sözcükler yazı çizgisinden (baseline) konumlanır, aynı satırdakiler aynı yüksekliğe hizalanır (`snap`), yakın sözcükler tek yazı parçası olur, sonra **aynı `Okuyucu.parsePage`** çalışır. Sayılardaki harf karışmaları (`fixNum`: ISA→15A, SOA→50A, DN5O→DN50) yalnız sayı gibi duran sözcüklerde düzeltilir. Gerçek PDF yazısıyla çakışan OCR sözcüğü atılır.
+- **Doğruluk:** OCR'lı sayfadan gelen her satır `OCR ile okundu, kontrol edin` uyarısıyla gelir; `autoCheck` bunları kendiliğinden kapatmaz.
+- **Rapor / şerit:** durum şeridinde "Sayfa 3 / 40 (OCR ile okunuyor)"; okuma raporunda "OCR ile okunan sayfa: N (Tesseract SIMD)"; belge kartı notu.
+- **Okuyucu:** fiyatsız tabloda iki kod sütunu (CODE STOP / CODE SDNR) artık iki ayrı seçenek (`variant`); önceden ikinci kod kayboluyordu.
+- Testler: `tests/ornek/ocr-cizgi-yazi.json` (Flowmaster sayfa 6'nın gerçek + OCR yazı konumları; fiyat yok), `tests/e2e.js` 15. adım (tablo resme çevrilip yalnız resim içeren PDF yapılır, OCR ile okunur).
+- Test kancası: `window.KLAVUZ_TEST.api = { readPdf, newStat }`; `KLAVUZ_TEST.ocrPsm`, `ocrConf`, `ocrDump` (temizlenmiş sayfa resmi) yalnız denemelerde.

@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.9.0';
+  var APP_VERSION = '0.10.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -482,7 +482,7 @@
         if (p === 1 && !o.force && Okuyucu.looksLikeCertificate(text + '\n', n)) return { cert: true, pages: await pageShots(pdf, o.prog) };
         stat.textLength += text.replace(/\s+/g, '').length;
         scanContacts(text, stat);
-        await readPage(page, items, p, OPS, cur, stat);
+        await readPage(page, items, p, OPS, cur, stat, o.prog ? (function (pp) { return function (w) { o.prog(pp, n, w); }; })(p) : null);
         page.cleanup();
         if (o.prog) o.prog(p, n, '');
         if (p % CH === 0 || p === n) { await o.chunk(cur, p + 1); cur = { rows: [], images: [] }; }
@@ -490,15 +490,19 @@
         await pause();
       }
       return {};
-    } finally { try { pdf.destroy(); } catch (e) {} }
+    } finally {
+      try { pdf.destroy(); } catch (e) {}
+      if (window.KlavuzOcr) await KlavuzOcr.stop(); // OCR belleği her belgeden sonra bırakılır
+    }
   }
-  async function readPage(page, items, p, OPS, cur, stat) {
+  async function readPage(page, items, p, OPS, cur, stat, prog) {
     var rows = cur.rows, images = cur.images;
     var view = page.view, area = (view[2] - view[0]) * (view[3] - view[1]);
-    var ops = await page.getOperatorList(), boxes = [], ctm = [1, 0, 0, 1, 0, 0], stack = [], seen = {};
+    var ops = await page.getOperatorList(), boxes = [], ctm = [1, 0, 0, 1, 0, 0], stack = [], seen = {}, curves = 0;
     for (var k = 0; k < ops.fnArray.length; k++) {
       var fn = ops.fnArray[k], a = ops.argsArray[k];
-      if (fn === OPS.save) stack.push(ctm.slice());
+      if (fn === OPS.constructPath) { (a[0] || []).forEach(function (op) { if (op === OPS.curveTo || op === OPS.curveTo2 || op === OPS.curveTo3) curves++; }); }
+      else if (fn === OPS.save) stack.push(ctm.slice());
       else if (fn === OPS.restore) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
       else if (fn === OPS.transform) ctm = mulM(a, ctm);
       else if (fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat) {
@@ -507,6 +511,20 @@
         var sig = [x, y, w, h].map(Math.round).join(',');
         if (Math.min(w, h) >= 38 && w * h < 0.5 * area && !seen[sig]) { seen[sig] = true; boxes.push({ id: boxes.length, x: x, y: y, w: w, h: h, name: a && a[0] }); }
       }
+    }
+    // Yazısı resim (taranmış) ya da çizgiye çevrilmiş sayfa: OCR ile okunur, sözcükler sayfanın yazılarına eklenir
+    var ocrUsed = false;
+    if (window.KlavuzOcr && !stat.ocrOff && KlavuzOcr.need(items.length, curves)) {
+      try {
+        if (prog) prog('OCR ile okunuyor');
+        var oi = await KlavuzOcr.readPage(page, items);
+        stat.ocrPages = (stat.ocrPages || 0) + 1; stat.ocrEngine = KlavuzOcr.info.engine;
+        if (oi.length) {
+          ocrUsed = true; items = items.concat(oi);
+          var ot = oi.map(function (i) { return i.str; }).join(' ');
+          stat.textLength += ot.replace(/\s+/g, '').length; scanContacts(ot, stat);
+        }
+      } catch (e) { stat.ocrOff = true; stat.ocrErr = (e && e.message) || String(e); }
     }
     if (items.length < 5) stat.emptyPages++;
     var res = Okuyucu.parsePage(items, boxes, p), urls = {}, inks = {}, usedPick = {};
@@ -561,6 +579,8 @@
         else if (t.hasPrice && r.price == null) warn = 'fiyat okunamadı';
         else if (!r.size && !r.code) warn = plain ? null : 'ölçü okunamadı';
         if (plain && !special && !r.size) return;
+        // OCR'dan gelen satır her zaman elle kontrole kalır (O/0, I/1, virgül / nokta karışabilir)
+        if (ocrUsed) warn = 'OCR ile okundu, kontrol edin' + (warn ? ' · ' + warn : '');
         rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '',
           size: (r.size + (r.variant ? ' · ' + r.variant : '')).trim(), price: r.price, cur: r.cur,
           priceVat: r.priceVat, specs: r.specs, img: imgUrl, page: p, warn: warn });
@@ -572,7 +592,7 @@
     res.tables.forEach(function (t) { if (t.img != null) usedImg[t.img] = true; });
     res.loose.forEach(function (l) {
       var r = parseLine(l.text);
-      if (r && r.code && r.price != null && r.name.length >= 3) { r.page = p; r.sub = ''; r.y = l.y; r.x = l.x; lineRows.push(r); rows.push(r); }
+      if (r && r.code && r.price != null && r.name.length >= 3) { if (ocrUsed) r.warn = 'OCR ile okundu, kontrol edin' + (r.warn ? ' · ' + r.warn : ''); r.page = p; r.sub = ''; r.y = l.y; r.x = l.x; lineRows.push(r); rows.push(r); }
     });
     // Tabloya bağlanmamış resimler, en yakın tablo dışı ürün satırına bağlanır
     boxes.forEach(function (b) {
@@ -697,7 +717,7 @@
         if (samples.filter(function (s) { return s.why === r.warn; }).length < 4) samples.push({ p: r.page || 0, name: String(r.name).slice(0, 50), code: r.code || '', size: r.size || '', why: r.warn });
       }
     });
-    return { ver: APP_VERSION, secs: res.secs || 0, engine: res.engine || '', file: name, supplier: supplier, kind: kind, date: today(), pages: res.pageCount || 0, emptyPages: res.emptyPages || 0,
+    return { ver: APP_VERSION, secs: res.secs || 0, engine: res.engine || '', file: name, supplier: supplier, kind: kind, date: today(), pages: res.pageCount || 0, emptyPages: res.emptyPages || 0, ocrPages: res.ocrPages || 0, ocrEngine: res.ocrEngine || '', ocrErr: res.ocrErr || '',
       tables: res.tableCount || 0, products: Object.keys(prod).length, withImg: Object.keys(prodImg).length, rows: rows.length,
       noPrice: noPrice, noCode: noCode, info: (res.infoTables || []).slice(0, 12), infoCount: (res.infoTables || []).length, warns: warns, samples: samples };
   }
@@ -705,6 +725,7 @@
     if (!rp) return 'Bu belge için okuma raporu yok (eski sürümde yüklenmiş).';
     var out = ['Klavuz ' + rp.ver + ' · Okuma raporu · ' + rp.date, 'Belge: ' + rp.file, 'Tedarikçi: ' + rp.supplier + ' · Tür: ' + (KINDS[rp.kind] || rp.kind), '',
       'Sayfa: ' + rp.pages + (rp.emptyPages ? ' (' + rp.emptyPages + ' sayfada yazı yok)' : '') + (rp.secs ? ' · Süre: ' + rp.secs + ' sn' : '') + (rp.engine ? ' · Motor: ' + rp.engine : ''),
+      (rp.ocrPages ? 'OCR ile okunan sayfa: ' + rp.ocrPages + (rp.ocrEngine ? ' (' + rp.ocrEngine + ')' : '') : 'OCR ile okunan sayfa: 0') + (rp.ocrErr ? ' · OCR çalışmadı: ' + rp.ocrErr : ''),
       'Ürün tablosu: ' + rp.tables + ' · Ürün: ' + rp.products + ' · Satır: ' + rp.rows,
       'Resim bulunan ürün: ' + rp.withImg + ' / ' + rp.products,
       'Fiyatsız satır: ' + rp.noPrice + ' · Kodsuz satır: ' + rp.noCode];
@@ -726,6 +747,7 @@
     if (!rp) return '<div class="muted">Bu belge için okuma raporu yok (eski sürümde yüklenmiş).</div>';
     var keys = Object.keys(rp.warns).sort(function (a, b) { return rp.warns[b] - rp.warns[a]; });
     return '<div class="kv"><span>Sayfa</span><b>' + rp.pages + (rp.emptyPages ? ' · ' + rp.emptyPages + ' yazısız' : '') + (rp.secs ? ' · ' + rp.secs + ' sn' : '') + '</b></div>' +
+      (rp.ocrPages || rp.ocrErr ? '<div class="kv"><span>OCR</span><b>' + (rp.ocrPages ? rp.ocrPages + ' sayfa okundu' : '') + (rp.ocrErr ? ' çalışmadı: ' + esc(rp.ocrErr) : '') + '</b></div>' : '') +
       '<div class="kv"><span>Ürün / satır</span><b>' + rp.products + ' ürün · ' + rp.rows + ' satır</b></div>' +
       '<div class="kv"><span>Resim bulunan ürün</span><b>' + rp.withImg + ' / ' + rp.products + '</b></div>' +
       '<div class="kv"><span>Fiyatsız / kodsuz satır</span><b>' + rp.noPrice + ' / ' + rp.noCode + '</b></div>' +
@@ -896,7 +918,8 @@
     else if (!j.rows.length) throw new Error('Belgede ürün satırı bulunamadı.');
     else {
       prepDraft(j.rows);
-      j.note = j.stat.emptyPages ? j.stat.emptyPages + ' sayfada yazı yok (taranmış resim); o sayfalar okunamadı.' : '';
+      j.note = (j.stat.ocrPages ? j.stat.ocrPages + ' sayfa OCR ile okundu; bu satırları kontrol edin. ' : '') +
+        (j.stat.emptyPages ? j.stat.emptyPages + ' sayfada yazı bulunamadı; o sayfalar okunamadı.' : '') + (j.stat.ocrErr ? ' OCR çalışmadı: ' + j.stat.ocrErr : '');
       j.report = buildReport(j.name, j.supplier, j.kind, j.stat, j.rows);
     }
     j.status = 'ready'; j.prog = '';
@@ -985,6 +1008,7 @@
       if (o.status !== 'check') return;
       var it = db.items[o.itemId]; if (!it) return;
       var w = o.why || '', sib = offersOf(it.id), ok = false;
+      if (/OCR/.test(w)) return; // OCR ile okunan satır kendiliğinden doğrulanmaz
       if (/iki kez/.test(w)) ok = true; // aynı kodlu satırlar kaydederken zaten tek teklifte birleşti
       else if (/I\/L\/1/.test(w)) {
         // Kodun başı aynı üründeki diğer kodlarla aynı kalıptaysa ya da kod başka satıcıda da geçiyorsa doğrudur
@@ -1935,8 +1959,14 @@
   // Sürüm testi: markaya değil sistemin kendisine yönelik maddeler. Hangi belgeyle denendiği not kutusuna yazılır.
   var VTEST = [
     ['Kurulum ve güncelleme', [
-      ['g3', 'Bu sürümü dosyadan değil, 0.8.0 içinden kurdum: Ayarlar > Uygulama bilgileri > "Güncellemeyi denetle" > "İndir ve kur"; kurulum ekranı açıldı'],
+      ['g3', 'Bu sürümü dosyadan değil, 0.9.0 içinden kurdum: Ayarlar > Uygulama bilgileri > "Güncellemeyi denetle" > "İndir ve kur"; kurulum ekranı açıldı'],
       ['k1', 'Kurulumdan sonra ürünlerim, resimlerim ve ayarlarım duruyor']]],
+    ['OCR: taranmış katalog', [
+      ['o1', 'Taranmış (yazısı seçilemeyen) bir katalog yükledim; durum şeridinde "OCR ile okunuyor" yazdı ve okuma bitti (süreyi nota yazın)'],
+      ['o2', 'Okuma raporunda "OCR ile okunan sayfa" sayısı yazıyor; "OCR çalışmadı" yazmıyor'],
+      ['o3', 'OCR ile okunan ürünler "OCR ile okundu, kontrol edin" uyarısıyla geldi; kod ve fiyatların çoğu doğru (yanlış örnekleri nota yazın)'],
+      ['o4', 'OCR sırasında uygulama kapanmadı, telefon aşırı yavaşlamadı; başka ekranlara geçebildim'],
+      ['o5', 'Yazısı normal olan kataloglar eskisi gibi hızlı okundu']]],
     ['Uygulama içi tarayıcı', [
       ['b1', 'Belge sekmesi > "İnternetten ürün al" > Amazon (ya da Hepsiburada) uygulamanın içinde açıldı'],
       ['b2', 'Bir ürün sayfasında "Klavuz\'a al": ad, fiyat, marka forma geldi; resim de geldi'],
@@ -2489,6 +2519,7 @@
     var lastUpd = 0; try { lastUpd = Number(localStorage.getItem('klavuz.upd')) || 0; } catch (e) {}
     if (Date.now() - lastUpd > 12 * 3600 * 1000) setTimeout(function () { checkUpdate(false); }, 4000);
   }
+  if (window.KLAVUZ_TEST) window.KLAVUZ_TEST.api = { readPdf: readPdf, newStat: newStat }; // yalnız otomatik testler
   boot();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(function () {});

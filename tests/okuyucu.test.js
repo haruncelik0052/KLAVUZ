@@ -112,5 +112,14 @@ ok(O.looksLikeCertificate(c.text, c.pageCount) === true, 'sertifika belgesi tan�
 ok(O.looksLikeCertificate('GLOBE VALVES WITH CLASS CERTIFICATE type approval certificate of', 32) === false, 'uzun katalog sertifika sayılmadı');
 ok(O.looksLikeCertificate('YATAY PLASTİK SU DEPOLARI FİYAT LİSTESİ', 1) === false, 'fiyat listesi sertifika sayılmadı');
 
+console.log('OCR çıktısı (yazıları çizgiye çevrilmiş sayfa, renkli başlık, gri satırlar)');
+t = tables('ocr-cizgi-yazi.json');
+ok(t.length === 4, 'dört tablo bulundu: ' + t.length);
+ok(t[0].name === 'GLOBE VALVES,BRONZE BODY & TRIM, JIS 5K', 'ürün adı: ' + t[0].name);
+ok(t[0].rows.length === 14 && t[1].rows.length === 14 && t[2].rows.length === 12 && t[3].rows.length === 12, 'bütün satırlar, iki kod sütunu ayrı seçenek (7×2, 6×2)');
+ok(t[0].rows[0].code === '750121' && t[0].rows[0].variant === 'STOP' && t[0].rows[1].code === '751051' && t[0].rows[1].variant === 'SDNR', 'STOP ve SDNR kodları ayrı');
+ok(t[0].rows[0].size === '15A' && /PCD 60/.test(t[0].rows[0].specs) && /HOLES 4X12/.test(t[0].rows[0].specs), 'ölçü ve özellikler: ' + t[0].rows[0].size + ' · ' + t[0].rows[0].specs);
+ok(t[2].rows.every((r) => /^\d{6}$/.test(r.code)), 'gri satırlardaki kodlar da okundu');
+
 console.log(fail ? fail + ' test BAŞARISIZ' : 'Tüm testler geçti');
 process.exit(fail ? 1 : 0);

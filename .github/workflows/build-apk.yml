@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ilk-surum, main, ccr-2f65d271-hbxt5y, ccr-9862a3e5-483rrf, ccr-1df92bb6-t62pv1]
+    branches: [ilk-surum, main, ccr-2f65d271-hbxt5y, ccr-9862a3e5-483rrf, ccr-1df92bb6-t62pv1, claude/klavuz-app-handover-mtewnk]
   workflow_dispatch:
 
 permissions:
@@ -26,7 +26,7 @@ jobs:
       - name: Web uygulamasını Android paketine kopyala
         run: |
           mkdir -p android/app/src/main/assets
-          cp index.html app.js okuyucu.js manifest.json icon.svg android/app/src/main/assets/
+          cp index.html app.js okuyucu.js ocr.js manifest.json icon.svg android/app/src/main/assets/
           cp -r vendor android/app/src/main/assets/
 
       - name: APK derle

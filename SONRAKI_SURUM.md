@@ -1,37 +1,34 @@
 # Klavuz — sonraki sürüm için devir ve istek listesi
 
-## GÜNCEL DEVİR (0.9.0, 14.11.2026) — önce burayı okuyun
+## GÜNCEL DEVİR (0.10.0, 14.11.2026) — önce burayı okuyun
 
-- **Dal:** `ccr-1df92bb6-t62pv1` (son sürüm 0.9.0; `ccr-9862a3e5-483rrf` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
+- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.10.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
 - **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Öncelik verimli uygulama; ince ayar kullandıkça yapılır.
-- **APK teslimi:** Her sürümde APK sohbetin içinde dosya olarak verilir: push sonrası derleme bitince (yaklaşık 1,5 dk)
+- **APK teslimi:** Her sürümde APK sohbetin içinde dosya olarak verilir: push sonrası derleme bitince (yaklaşık 1,5–2 dk)
   `curl -sSL -o apk/Klavuz-<sürüm>.apk https://github.com/haruncelik0052/KLAVUZ/releases/download/test-<commit7>/Klavuz-<commit7>.apk`
-  ile indirilir ve dosya gönderme aracıyla (SendUserFile) kullanıcıya iletilir. `apk/` klasörü depoya girmez. 0.8.0'dan sonra uygulama yeni sürümü kendisi de indirebilir (aşağıda); yine de dosya sohbette verilir.
-- **Kendini güncelleme (0.8.0):** Yayın başlığı `Klavuz <sürüm> test-<commit7>` biçimindedir (iş akışı `versionName` değerini yazar). Uygulama GitHub yayın listesini okur, başlıktaki sürüm kendi sürümünden büyükse "İndir ve kur" kutusu gösterir. **Her işlevsel değişiklikte `APP_VERSION`, `versionName` ve `versionCode` artırılmalı**; aynı sürüm numarasıyla yapılan derleme kullanıcıya önerilmez. Depo herkese açık olduğu için indirme kimlik istemez; depo gizlenirse bu özellik çalışmaz.
-- **Yayın sayısı:** GitHub yayın listesi tarih sırasıyla gelmiyor; uygulama ilk 100 yayına bakar. Yayın sayısı 100e yaklaşırsa eski test yayınları silinmeli.
-- **Test:** `node tests/okuyucu.test.js`; `python3 -m http.server 8080` sonra `node tests/e2e.js`. İkisi de geçmeden gönderme. Android tarafı burada derlenemez; derleme hatası GitHub Actions çıktısından okunur.
-- **Gerçek kataloglarla deneme:** Drive bağlayıcısının `download_file_content` aracı 10 MB altı PDF'i bu ortama dosya olarak indirir (çıktıda "saved to ..." yolu yazar). `vendor/pdf.min.js` node içinde çalışır; sayfa yazı ve resim konumları uygulamanın gördüğü biçimde çıkarılıp `Okuyucu.parsePage` ile denenir. Her okuyucu değişikliğinden önce ve sonra Boss, Asel, Elif Depo, GS Marine Valve çıktısı karşılaştırılır. Gerçek PDF depoya konmaz.
-- **Telefonda doğrulananlar (0.8.0, 12 / 17, hepsi ✓):** kurulum, uyarı sayısının azalması, yeni görünümün beş maddesi (tablet dahil), fiyat karşılaştırması, "Güncellemeyi denetle" yanıtı, 10 MB üstü katalog. Önceki sürümlerde: yeniden okuma, yeni düzenler (ters tablo, ızgara, özellik kartı), teklif dosyası.
-- **0.8.0'da çalışmayan:** Hepsiburada paylaşımı bilgiyi kendiliğinden almadı (görünmeyen tarayıcı; neden bilinmiyor, büyük olasılıkla sitenin robot koruması). Amazon paylaşımı denenmedi.
-- **Kullanıcının 0.8.0 istekleri ve 0.9.0'da yapılan:** (1) "tarayıcı uygulamanın içinde açılsın, bir düğmeyle ürünleri alsın" → uygulama içi tarayıcı + "Klavuz'a al" (tek ürün ya da sayfadaki liste); (2) "bir kategoriyi olduğu gibi çekebilir miyim" → ekranda açık olan liste sayfası tek dokunuşla alınır; **sayfaları kendiliğinden gezip bütün kategoriyi indiren tarama yapılmadı ve yapılmayacak** (siteler toplu otomatik çekmeyi yasaklıyor ve engelliyor; kullanıcıya böyle söylendi); (3) "zip verince açsın" → ZIP desteği; (4) "kategori sistemi Amazon'unki gibi olsun" → **yapılmadı, sıradaki iş**: iki kademeli kategori ağacı (ana grup > alt grup), internetten alınan üründe sitenin kırıntı yolu (breadcrumb) ipucu olarak kullanılabilir. Amazon'un kategori ağacı birebir kopyalanmaz; tekne teknik malzemesine uygun ağaç kurulur.
-- **Telefonda bekleyenler:** 0.9.0'ın tamamı; özellikle (a) uygulamanın kendini 0.8.0'dan 0.9.0'a güncellemesi (ilk gerçek deneme), (b) uygulama içi tarayıcıda Amazon / Hepsiburada sayfasından alma (site düzenleri burada denenemedi; yalnız örnek HTML ile test edildi).
-- **Sıradaki iş:** aşağıdaki "YAPILACAK İŞLER" bölümü, sırasıyla.
-- **Görünüm kararı:** Kullanıcı Amazon'u yoğun kullanıyor ve benzer düzen istedi. Düzen ve kullanım mantığı alışveriş uygulaması gibidir (üstte arama, resimli kutular, kart ızgarası, yatay şeritler); Amazon'un adı, logosu ve birebir görünümü kopyalanmaz.
+  ile indirilir ve dosya gönderme aracıyla (SendUserFile) kullanıcıya iletilir. `apk/` klasörü depoya girmez.
+- **Kendini güncelleme (0.8.0):** Yayın başlığı `Klavuz <sürüm> test-<commit7>`. **Her işlevsel değişiklikte `APP_VERSION`, `versionName`, `versionCode`, `sw.js` CACHE birlikte artırılmalı.** Sürüm karşılaştırması sayısaldır (0.10.0 > 0.9.0).
+- **Yayın sayısı:** Uygulama ilk 100 yayına bakar. Yayın sayısı 100'e yaklaşırsa eski test yayınları silinmeli.
+- **Test:** `node tests/okuyucu.test.js`; `python3 -m http.server 8080` sonra `node tests/e2e.js` (15. adım OCR, yaklaşık 10 sn). İkisi de geçmeden gönderme.
+- **Gerçek kataloglarla deneme:** Drive bağlayıcısının `download_file_content` aracı 10 MB altı PDF'i indirir. 0.10.0'da karşılaştırma Playwright içinde uygulamanın kendi `readPdf` işleviyle yapıldı: `window.KLAVUZ_TEST = {}` ile açılınca `KLAVUZ_TEST.api = { readPdf, newStat }` gelir; `KLAVUZ_TEST.chunk = 1` her sayfadan sonra satır verir. Her okuyucu değişikliğinden önce ve sonra Boss, Asel, Elif Depo, GS Marine Valve çıktısı karşılaştırılır. Gerçek PDF depoya konmaz.
+- **0.10.0 (OCR) yapılanlar:** aşağıda "Sürüm 0.10.0" (DEVIR.md). Ölçülen: Flowmaster 0 → 80 ürün / 600 satır (506 kod, 579 ölçü temiz; masaüstünde 120 sn, telefonda birkaç dakika beklenir); Vamates tanıtım broşürü, ürün tablosu yok (OCR yazıları okur, ürün çıkmaz, sayfa görüntüsü olarak saklanır — doğru davranış); Boss, Asel, Elif birebir aynı; GS'de yan yana PN10/PN16 flanş tablolarında daha önce kaybolan 43 ikinci kod artık ayrı seçenek (eskiler değişmedi).
+- **Telefonda bekleyenler:** 0.9.0'ın tamamı (kendini güncelleme, uygulama içi tarayıcı, ZIP, CSV) ve 0.10.0 OCR: süre, bellek, WebView'da `file://` altında Tesseract worker'ının açılması (rapor "OCR çalışmadı: ..." derse hata metni oradadır).
+- **Görünüm kararı:** Alışveriş uygulaması düzeni; Amazon'un adı, logosu, birebir görünümü kopyalanmaz.
 - **Sınır:** 10 MB üstü Drive dosyaları ve yedek dosyası bu ortama indirilemiyor.
-- Ayrıntılı teknik geçmiş `DEVIR.md` içindedir. Aşağısı eski istek listesidir; 1–16 arası isteklerin çoğu karşılandı.
+- Ayrıntılı teknik geçmiş `DEVIR.md` içindedir.
 
-## YAPILACAK İŞLER (0.9.0 sonrası, sırasıyla)
+## YAPILACAK İŞLER (0.10.0 sonrası, sırasıyla)
 
 Her iş ayrı sürüm numarasıyla çıkar (`APP_VERSION`, `versionName`, `versionCode`, `sw.js` CACHE birlikte artar); aksi halde uygulamanın kendi güncellemesi yeni sürümü görmez. Kullanıcıya seçim sorulmaz.
 
-### 1. 0.9.0 telefon sonucu (önce bu)
+### 1. 0.9.0 ve 0.10.0 telefon sonucu (önce bu)
 Kullanıcı sonucu ayrıca gönderecek. Bakılacaklar:
 - **Kendini güncelleme** ilk kez gerçekten denendi mi (0.8.0 içinden 0.9.0'a)? Takıldıysa nerede: kutu çıkmadı / indirmedi / kurulum ekranı açılmadı / izin döngüsü. Kod: `checkUpdate`, `installUpdate`, `downloadTo` (MainActivity.java), `KlavuzUpdate` (app.js).
 - **Uygulama içi tarayıcı:** hangi sitede "Klavuz'a al" kaç ürün getirdi, ad / fiyat / resim eksik mi. Gerçek Amazon ve Hepsiburada sayfaları bu ortamda denenemedi. Eksik çıkarsa kullanıcıdan sitenin adını ve sayfanın türünü (ürün / arama / kategori) iste; `extractProduct` ve `extractList` o siteye göre ayarlanır. Gerekirse tarayıcıya "sayfanın HTML'ini paylaş" gibi bir teşhis düğmesi eklenip örnek alınır.
 - **ZIP** ve **CSV Türkçe harf** telefonda çalıştı mı.
 - Hâlâ bekleyen: kullanıcıdan **"Durum özeti"** metni (Ayarlar > Uygulama bilgileri) ve yanlış otomatik doğrulanan ürün adları hiç gelmedi. 0.8.0'da "otomatik doğrulananlar doğru" işaretlendi; yine de özet gelirse uyarı nedenlerine bakılır.
 
-### 2. OCR: taranmış ve tabloları resim olan kataloglar
+### 2. OCR — YAPILDI (0.10.0). Aşağısı ilk plan; uygulanan hali DEVIR.md "Sürüm 0.10.0". Açık kalanlar: telefondaki süre / bellek sonucu, tablonun yalnız bir bölümü resim olan sayfa (sayfanın tamamı OCR'lanıyor, gerçek yazıyla çakışan OCR sözcüğü atılıyor; ayrı resim kutusu OCR'ı yapılmadı).
 Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (Apache 2.0)**. Yavaş olabilir; arka planda, parça parça.
 - **Örnek belgeler (Drive):** Vamates (tamamı taranmış PDF), Flowmaster (tabloları resim). Drive'da adla aranıp `download_file_content` ile indirilir (10 MB altıysa). Önce burada node ile denenir.
 - **Ne zaman devreye girer:** sayfada yazı yok ya da çok az (`items.length < 5`; şu an `stat.emptyPages` sayılıyor) ve sayfada büyük resim varsa. Yazısı olan sayfaya OCR yapılmaz. Belge raporunda "OCR ile okunan sayfa: N" yazsın.
@@ -41,7 +38,7 @@ Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (
 - **Test:** `tests/ornek/` altına OCR çıktısından üretilmiş bir sayfa konumu örneği (fiyatlar değiştirilerek); `tests/e2e.js` içinde tarayıcıda yazısı resim olan küçük bir PDF üretilip OCR ile okunduğu denenir (Playwright Chromium'da Tesseract.js çalışır).
 - Sürüm testi maddeleri: taranmış katalog okundu mu, süre, yanlış okunan fiyat / kod örnekleri.
 
-### 3. İki kademeli kategori ağacı (kullanıcı isteği: "Amazon'un kategori sistemi gibi")
+### 3. İki kademeli kategori ağacı (SIRADAKİ İŞ) (kullanıcı isteği: "Amazon'un kategori sistemi gibi")
 - Şu an tek kademe: `CATS` (22 grup, anahtar sözcüklerle), `classify`, `autoCat`, `item.category`, `item.cat2`, öğrenme `db.learn`.
 - Yapılacak: ana grup > alt grup (örn. Vana > Küresel vana / Çek valf / Kelebek vana; Pompa > Sintine / Tatlı su / Santrifüj; Rakor ve bağlantı > Nipel / Dirsek / Manşon). Ana sayfada ana gruplar kutu olarak, içine girince alt gruplar. `item.category` alt grubun kimliğini tutar, ana grup ondan türetilir; eski 22 kimlik ana grup olarak geçerli kalır (**veri taşıma gerekmeden**).
 - İnternetten alınan üründe sitenin kırıntı yolu (JSON-LD `BreadcrumbList`, Amazon `#wayfinding-breadcrumbs_feature_div`) kategori ipucu olarak kullanılır.

@@ -433,6 +433,39 @@ async function makeCatalog(browser, file, pages) {
   ok(/ürün bulunamadı/.test(await page.textContent('#toast')), 'ürün olmayan sayfada açıklayıcı uyarı verildi');
   await page.evaluate(() => { delete window.KlavuzAndroid; });
 
+  console.log('15. OCR: yazısı resim olan (taranmış) katalog internetsiz okunur');
+  {
+    // Tablo önce resme çevrilir, sonra yalnız bu resmi içeren bir PDF yapılır: sayfada seçilebilir yazı kalmaz
+    const pg = await browser.newPage({ viewport: { width: 900, height: 700 }, deviceScaleFactor: 2 });
+    let h = '<style>body{font-family:Arial;font-size:15pt;margin:30px;background:#fff}h2{margin:0 0 16px}table{border-collapse:collapse}td,th{border:1px solid #333;padding:6px 18px}</style><h2>KÜRESEL VANA PASLANMAZ</h2><table><tr><th>KOD</th><th>ÖLÇÜ</th><th>FİYAT</th></tr>';
+    for (let r = 1; r <= 5; r++) h += '<tr><td>HC' + (4100 + r) + '</td><td>' + (10 + 5 * r) + ' mm</td><td>' + (250 * r) + ',00 TL</td></tr>';
+    await pg.setContent(h + '</table>');
+    const png = (await pg.screenshot({ clip: { x: 0, y: 0, width: 620, height: 340 } })).toString('base64');
+    await pg.setContent('<body style="margin:0"><img style="width:160mm;margin:15mm" src="data:image/png;base64,' + png + '"></body>');
+    const scan = path.join(tmp, 'taranmis.pdf');
+    await pg.pdf({ path: scan, format: 'A4' }); await pg.close();
+    await page.click('button[data-tab="katalog"]');
+    await page.fill('#brandName', 'OCRMARKA'); await page.fill('#supName', ''); await page.selectOption('#kind', 'katalog');
+    await page.setInputFiles('#docFile', scan);
+    await page.click('button[data-act="read"]');
+    await page.waitForFunction(() => /OCR/.test((document.querySelector('#strip') || {}).textContent || ''), null, { timeout: 60000 }).then(() => ok(true, 'durum şeridinde OCR yazdı'), () => ok(false, 'durum şeridinde OCR yazmadı'));
+    await page.waitForFunction(() => [...document.querySelectorAll('.job')].some((j) => /taranmis/.test(j.textContent) && j.querySelector('button[data-act="save"]')), null, { timeout: 240000 });
+    const job = await page.evaluate(() => [...document.querySelectorAll('.job')].find((j) => /taranmis/.test(j.textContent)).textContent);
+    ok(/OCR ile okundu/.test(job), 'belge kartında OCR notu var: ' + job.slice(0, 300));
+    const before = await stats(page);
+    await page.click('.job button[data-act="save"]'); await settle(page);
+    const d = await page.evaluate(() => new Promise((res) => { const r = indexedDB.open('klavuz-img'); r.onsuccess = () => { const t = r.result.transaction('data'), q = t.objectStore('data').get('offers'), q2 = t.objectStore('data').get('docs'); t.oncomplete = () => { r.result.close(); res({ offers: Object.values(q.result || {}), docs: q2.result || [] }); }; }; }));
+    const offs = d.offers.filter((o) => /^HC41/.test(o.key || o.code || ''));
+    const codes = offs.map((o) => o.key || o.code).sort().join(',');
+    ok(offs.length >= 4, 'OCR ile en az 4 kod okundu: ' + codes);
+    ok(offs.filter((o) => o.listPrice === 250 * Number(String(o.key || o.code).slice(-1))).length >= 4, 'fiyatlar doğru okundu: ' + offs.map((o) => (o.key || o.code) + '=' + o.listPrice).join(' '));
+    ok(offs.length && offs.every((o) => o.status === 'check' && /OCR/.test(o.why)), 'OCR satırları elle kontrole kaldı');
+    const doc = d.docs.find((x) => /taranmis/.test(x.name));
+    ok(doc && doc.report && doc.report.ocrPages === 1 && !doc.report.ocrErr, 'okuma raporunda 1 OCR sayfası, hata yok');
+    const after = await stats(page);
+    ok(after.names.some((n) => /KÜRESEL VANA/i.test(n)), 'ürün adı OCR ile okundu');
+  }
+
   console.log('12. Güncelleme: yeni sürüm bulunur, indirme istenir');
   await page.evaluate(() => { window._upd = ''; window.KlavuzAndroid = { checkUpdate() { window._chk = true; }, installUpdate(u) { window._upd = u; } }; });
   const rel = (v, sha) => ({ name: 'Klavuz ' + v + ' test-' + sha, created_at: '2026-11-15T10:00:00Z', assets: [{ name: 'Klavuz-' + sha + '.apk', size: 4100000, browser_download_url: 'https://github.com/haruncelik0052/KLAVUZ/releases/download/test-' + sha + '/Klavuz-' + sha + '.apk' }] });
