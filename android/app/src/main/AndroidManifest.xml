@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Uygulamanın indirdiği yeni sürümü Android'in kurulum ekranına verebilmesi için. Kurulumu her seferinde kullanıcı onaylar. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <application
         android:allowBackup="false"
@@ -27,6 +29,16 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+        <!-- İndirilen güncelleme dosyasını yalnız kurulum ekranına açar -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.hcmarinworks.klavuz.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

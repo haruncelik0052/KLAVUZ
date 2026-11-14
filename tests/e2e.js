@@ -124,16 +124,16 @@ async function makeCatalog(browser, file, pages) {
   await page.fill('#q', 'vana 3/2');
   ok((await page.$$('.pcard')).length >= 1, 'tarif + ölçü ile arama sonuç verdi');
   await page.fill('#q', '');
-  ok(/Vana\s*\d+/.test(await page.textContent('#groups')) && /Kategorisiz/.test(await page.textContent('#groups')), 'kategori grupları sayılarıyla listelendi');
-  await page.click('#groups button:has-text("Filtre")');
+  ok(/Vana\s*\d+/.test(await page.textContent('#home')) && /Kategorisiz/.test(await page.textContent('#home')) && (await page.$$('#home .tile')).length >= 3, 'kategori grupları sayılarıyla listelendi');
+  await page.click('[data-act="grp"]:has-text("Filtre")');
   ok((await page.$$('.pcard')).length === 1, 'kategori grubu süzdü');
-  await page.click('#groups button:has-text("Kategorisiz")');
+  await page.click('[data-act="grp"]:has-text("Kategorisiz")');
   await page.click('.pcard >> nth=0');
   await page.selectOption('select[data-cat]', 'pompa'); await settle(page);
   ok((await stats(page)).rest.learn.name['eski surum urunu'] === 'pompa', 'elle atanan kategori öğrenildi');
   await page.evaluate(() => window.KlavuzBack());
   await page.click('button[data-act="dim"][data-id="marka"]');
-  await page.click('#groups button:has-text("ECA")');
+  await page.click('[data-act="grp"]:has-text("ECA")');
   ok(await page.isVisible('#gcard h2:has-text("ECA")'), 'marka kartı açıldı');
   await page.click('button[data-act="upfor"]');
   ok(await page.inputValue('#brandName') === 'ECA', 'karttan belge yüklemede marka hazır geldi');
@@ -150,7 +150,7 @@ async function makeCatalog(browser, file, pages) {
   ok(s.rest.brands.ECA && s.rest.sellers['DEPO A'], 'marka ve satıcı kartları kendiliğinden oluştu');
   await page.click('button[data-tab="ara"]');
   await page.click('button[data-act="dim"][data-id="satici"]');
-  await page.click('#groups button:has-text("DEPO A")');
+  await page.click('[data-act="grp"]:has-text("DEPO A")');
   await page.click('#gcard summary');
   await page.fill('#gcard input[data-prof="satici|disc"]', '10');
   await page.dispatchEvent('#gcard input[data-prof="satici|disc"]', 'change'); await settle(page);
@@ -204,7 +204,7 @@ async function makeCatalog(browser, file, pages) {
   await page.evaluate(() => window.KlavuzPage('<html><head><meta property="og:title" content="x"><meta property="product:price:amount" content="1.249,90"></head></html>'));
   ok(await page.inputValue('[data-np="price"]') === '1249.9', 'sayfadaki fiyat forma geldi');
   await page.click('button[data-act="npsave"]'); await settle(page);
-  ok(await page.isVisible('h2:has-text("Marin Sintine Pompası")') && await page.isVisible('a:has-text("internet sayfasını aç")'), 'ürün kartı bağlantısıyla eklendi');
+  ok(await page.isVisible('h2:has-text("Marin Sintine Pompası")') && await page.isVisible('button[data-act="openlink"]:has-text("internet sayfasını aç")'), 'ürün kartı bağlantısıyla eklendi');
   ok((await idbGet('items')).some(i => /Sintine/.test(i.name) && i.category === 'pompa'), 'eklenen ürün kategoriye ayrıldı');
   total.items += 1; total.offers += 1;
   await page.evaluate(() => window.KlavuzBack());
@@ -320,6 +320,60 @@ async function makeCatalog(browser, file, pages) {
     ok(p1 && p1.listPrice === 2500 && p2 && p2.listPrice === 2900 && p3.length === 1 && p3[0].listPrice === 4200, 'ızgara: birleşik hücredeki fiyatlar doğru satırlarda');
     ok(kart && kart.offs.length === 1 && kart.offs[0].size === 'Ø 1/2" - Ø 52"' && /Standart: ASTM , DIN , ISO · Malzeme: Carbon Steel/.test(kart.offs[0].specs), 'özellik kartı ürün oldu: ' + (kart ? kart.it.name + ' | ' + kart.offs[0].specs : 'yok'));
   }
+
+  console.log('10. İnternetten ürün: sayfadan ad, fiyat, marka, kod');
+  await page.evaluate(() => window.KlavuzShared('Şuna bir göz atın: Jabsco Pompa https://a.co/d/abc123'));
+  ok(await page.inputValue('[data-np="name"]') === 'Jabsco Pompa' && await page.inputValue('[data-np="seller"]') === 'Amazon', 'paylaşım yazısındaki giriş sözü atıldı, kısa bağlantı Amazon olarak tanındı');
+  await page.evaluate(() => window.KlavuzPage('<html><head><title>Amazon.com.tr</title><link rel="canonical" href="https://www.amazon.com.tr/dp/B000TEST01"></head><body>' +
+    '<span id="productTitle">  Jabsco 31395-0292 Par-Max 2.9 Tatlı Su Basınç Pompası 12V  </span><a id="bylineInfo">Marka: Jabsco</a>' +
+    '<div id="corePrice_feature_div"><span class="a-price"><span class="a-offscreen">7.234,56 TL</span></span></div>' +
+    '<img id="landingImage" src="data:image/gif;base64,R0lGOD" data-old-hires="https://m.media-amazon.com/images/I/test.jpg"></body></html>', 'https://www.amazon.com.tr/dp/B000TEST01?ref=x'));
+  ok(await page.inputValue('[data-np="name"]') === 'Jabsco 31395-0292 Par-Max 2.9 Tatlı Su Basınç Pompası 12V', 'Amazon sayfasından tam ürün adı alındı');
+  ok(await page.inputValue('[data-np="price"]') === '7234.56' && await page.inputValue('[data-np="brand"]') === 'Jabsco', 'fiyat ve marka alındı');
+  ok(/amazon\.com\.tr\/dp\/B000TEST01$/.test(await page.textContent('#newprod .muted >> nth=-1')), 'kısa bağlantı yerine ürünün asıl adresi saklandı');
+  await page.evaluate(() => window.KlavuzBack());
+  await page.evaluate(() => window.KlavuzShared('https://www.hepsiburada.com/urun-p-HB1'));
+  await page.evaluate(() => window.KlavuzPage('<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"BreadcrumbList"},{"@type":"Product","name":"Rule 1100 GPH Sintine Pompası","sku":"RL-27D","brand":{"@type":"Brand","name":"Rule"},"image":["https://img.example.com/a.jpg"],"offers":{"@type":"Offer","price":"2899.90","priceCurrency":"TRY"}}]}<\/script></head><body></body></html>', 'https://www.hepsiburada.com/urun-p-HB1'));
+  ok(await page.inputValue('[data-np="name"]') === 'Rule 1100 GPH Sintine Pompası' && await page.inputValue('[data-np="price"]') === '2899.9' && await page.inputValue('[data-np="brand"]') === 'Rule' && await page.inputValue('[data-np="code"]') === 'RL-27D', 'sitenin yapısal verisinden ad, fiyat, marka, kod alındı');
+  await page.evaluate(() => window.KlavuzBack());
+  await page.evaluate(() => window.KlavuzShared('https://www.amazon.com.tr/dp/B0'));
+  await page.evaluate(() => window.KlavuzPage('<html><head><title>Robot Check</title></head><body></body></html>', ''));
+  ok(/robot/.test(await page.textContent('#toast')), 'site bilgi vermeyince kullanıcıya söylendi');
+  await page.evaluate(() => window.KlavuzBack());
+
+  console.log('11. Fiyat değişikliği karşılaştırması');
+  const zam = path.join(tmp, 'depo-zam.csv');
+  fs.writeFileSync(zam, 'KV1-1001,Vana,150\n');
+  await page.click('button[data-tab="katalog"]');
+  await page.fill('#brandName', 'ECA'); await page.fill('#supName', 'DEPO A'); await page.selectOption('#kind', 'fiyat');
+  await page.setInputFiles('#docFile', zam);
+  await page.click('button[data-act="read"]');
+  await page.waitForSelector('.job button[data-act="save"]', { timeout: 30000 });
+  await page.click('.job button[data-act="save"]'); await settle(page);
+  await page.click('nav button[data-tab="uyari"]');
+  const cmpText = ((await page.textContent('.cmp').catch(() => '')) || '').replace(/\s+/g, ' ');
+  ok(/Eski.*95.*Yeni.*150/.test(cmpText) && /%/.test(cmpText), 'uyarıda eski ve yeni fiyat yan yana: ' + cmpText);
+  await page.click('button[data-act="ackall"]'); await settle(page);
+  ok(!(await page.$('.cmp')), '"Hepsini gördüm" fiyat uyarılarını kapattı');
+
+  console.log('12. Güncelleme: yeni sürüm bulunur, indirme istenir');
+  await page.evaluate(() => { window._upd = ''; window.KlavuzAndroid = { checkUpdate() { window._chk = true; }, installUpdate(u) { window._upd = u; } }; });
+  const rel = (v, sha) => ({ name: 'Klavuz ' + v + ' test-' + sha, created_at: '2026-11-15T10:00:00Z', assets: [{ name: 'Klavuz-' + sha + '.apk', size: 4100000, browser_download_url: 'https://github.com/haruncelik0052/KLAVUZ/releases/download/test-' + sha + '/Klavuz-' + sha + '.apk' }] });
+  await page.evaluate((j) => window.KlavuzUpdate(j), JSON.stringify([rel('0.1.0', 'aaa1111')]));
+  ok(!(await page.$('#updbox')), 'eski sürüm için güncelleme önerilmedi');
+  await page.click('nav button[data-tab="ayar"]');
+  await page.click('[data-act="toggle"][data-id="ab"]');
+  await page.click('button[data-act="updcheck"]');
+  ok(await page.evaluate(() => window._chk === true), '"Güncellemeyi denetle" denetimi başlattı');
+  await page.evaluate((j) => window.KlavuzUpdate(j), JSON.stringify([rel('0.1.0', 'aaa1111'), rel('9.9.9', 'bbb2222'), { name: 'Klavuz test eski', assets: [] }]));
+  ok(/Klavuz 9\.9\.9/.test(await page.textContent('#updbox')), 'yeni sürüm kutusu çıktı');
+  await page.click('button[data-act="updinstall"]');
+  ok(await page.evaluate(() => /releases\/download\/test-bbb2222\/Klavuz-bbb2222\.apk$/.test(window._upd)), 'doğru APK indirilmek üzere istendi');
+  await page.evaluate(() => window.KlavuzUpdateProgress(40));
+  ok(/%40/.test(await page.textContent('#updbox')), 'indirme ilerlemesi görünüyor');
+  await page.evaluate(() => window.KlavuzUpdateProgress(100));
+  ok(/Yükle/.test(await page.textContent('#updbox')), 'indirme bitince ne yapılacağı yazıyor');
+  await page.evaluate(() => { delete window.KlavuzAndroid; });
 
   ok(errors.length === 0, 'sayfada hata yok ' + JSON.stringify(errors));
   await browser.close();

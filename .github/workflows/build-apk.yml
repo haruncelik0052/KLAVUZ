@@ -50,7 +50,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           TAG="test-${GITHUB_SHA::7}"
+          # Sürüm numarası başlıkta yer alır; uygulama "Güncellemeyi denetle" ile yeni sürümü bu başlıktan tanır
+          VER=$(grep -oP "versionName '\K[0-9.]+" android/app/build.gradle)
           gh release create "$TAG" out/*.apk \
-            --title "Klavuz test $TAG" \
+            --title "Klavuz $VER $TAG" \
             --notes "Test APK'sı. Telefonda kurmak için 'bilinmeyen kaynaklardan kuruluma izin ver' seçeneğini açmanız gerekebilir." \
             --prerelease

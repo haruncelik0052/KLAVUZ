@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-1df92bb6-t62pv1` dalı (sürüm 0.7.0; `ccr-9862a3e5-483rrf` üzerine kuruldu)
+- Güncel çalışma: `ccr-1df92bb6-t62pv1` dalı (sürüm 0.8.0; `ccr-9862a3e5-483rrf` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -149,6 +149,16 @@ Gerçek Rushwarm, Asmarine ve Eser Pompa dosyaları Drive'dan indirilip çözül
 - **Para birimi ayrı sütunda** (€) olan listeler doğru para birimiyle okunur; her satırda başlığını tekrar eden sütun (ADET) özellik sayılmaz.
 - Testler: `tests/ornek/` altında dört yeni örnek (ters-tablo, izgara-fiyat, ozellik-karti, para-birimi-sutunu), `tests/e2e.js` 9. adım.
 
-Ölçülen: Rushwarm 12 seri / 111 model; Asmarine 11 kart; Eser Pompa 3 ürün / 46 teklif. Boss, Asel, Elif Depo, GS Marine Valve çıktısı 0.6.0 ile birebir aynı.
+Ölçülen: Rushwarm 12 seri / 112 model; Asmarine 11 kart; Eser Pompa 3 ürün / 46 teklif. Boss, Asel, Elif Depo, GS Marine Valve çıktısı 0.6.0 ile birebir aynı.
 
 Sıradaki iş: telefon sonucu, sonra OCR.
+
+## Sürüm 0.8.0 ekleri (mağaza görünümü, kendini güncelleme, internetten ürün, uyarılar)
+
+- **Görünüm:** arama kutusu (`#q`) artık üst çubukta, her ekranda. `viewSearch` ana sayfası: gruplar resimli kutular (`.tiles`), "Son eklenenler" şeridi (`.strip`, `miniCard`), ürünler kart ızgarası (`.grid`). Ürün sayfası: resim + bilgi (`.dgrid`, tablette yan yana), tam genişlik "Sepete ekle", "Teknik özellikler" listesi, benzer ürünler şeridi; yönetim kutuları (kontrol, teklifler, kategori, not) altta. Belgeler kapak resimli kartlar (`.docgrid`; kapak `cover:<docId>` anahtarında, ilk gösterimde belgenin ilk resminden üretilir); "Ürünler" düğmesi o belgenin ürünlerini açar.
+- **Güncelleme:** `checkUpdate` / `KlavuzUpdate` / `installUpdate` / `KlavuzUpdateProgress` (app.js); Android köprüsü `checkUpdate`, `installUpdate` (yalnız `github.com/haruncelik0052/KLAVUZ/releases/download/` adresi, paket adı denetimi, FileProvider `com.hcmarinworks.klavuz.files`, `REQUEST_INSTALL_PACKAGES`). Açılışta en çok 12 saatte bir, internet varsa sessizce denetlenir. İnternet yoksa hiçbir şey olmaz.
+- **İnternetten ürün:** Android `fetchText` sayfayı görünmeyen bir WebView'da açar (`probePage`), yüklenince HTML'i `KlavuzPage(html, sonAdres)` işlevine verir; olmazsa düz indirir. `extractProduct`: önce JSON-LD (Product), sonra Amazon alanları (`#productTitle`, `.a-offscreen`, `#landingImage`, `#bylineInfo`), sonra og / itemprop etiketleri; robot denetimi sayfası tanınır. Paylaşım yazısının baş sözleri (`shareName`) atılır; kısa bağlantı yerine asıl adres saklanır. Bağlantılar `openLink` köprüsüyle açılır (WebView içindeki `<a target=_blank>` telefonda açılmıyordu).
+- **Uyarılar:** fiyatı değişen teklifte son `db.history` kaydından eski → yeni fiyat ve yüzde; "Hepsini gördüm". `autoCheck`: fiyatlı listede fiyatı boş satır ve kodlu tabloda kodu boş satır artık okuma hatası sayılmaz.
+- Testler: `tests/e2e.js` 10–12. adımlar (internetten ürün, fiyat karşılaştırma, güncelleme).
+
+Telefonda doğrulanmadı: görünmeyen WebView ile Amazon sayfası okuma, APK indirme ve kurulum ekranı. Bunlar bu ortamda denenemez.

@@ -15,6 +15,8 @@ import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -35,6 +37,13 @@ public class MainActivity extends AppCompatActivity {
     private long lastBack;
     private String sharedText = "";
     private boolean pageReady;
+    // İnternetten paylaşılan ürün sayfasını okumak için görünmeyen ikinci tarayıcı
+    private WebView probe;
+    private boolean probeDone;
+    private int probeSeq;
+    private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+    private static final String UPDATE_PREFIX = "https://github.com/haruncelik0052/KLAVUZ/releases/download/";
+    private static final String UPDATE_LIST = "https://api.github.com/repos/haruncelik0052/KLAVUZ/releases?per_page=20";
 
     private void deliverFiles(Uri[] uris) {
         if (filePathCallback != null) {
@@ -97,21 +106,93 @@ public class MainActivity extends AppCompatActivity {
             return t;
         }
 
-        /** Paylaşılan ürün sayfasını indirir (internet varsa) ve sayfadaki KlavuzPage işlevine verir. */
+        /**
+         * Paylaşılan ürün sayfasını (internet varsa) görünmeyen bir tarayıcıda açar; sayfa tam yüklenince içeriğini
+         * sayfadaki KlavuzPage işlevine verir. Alışveriş siteleri bilgiyi çoğunlukla sayfa açıldıktan sonra doldurduğu
+         * ve düz indirmeyi reddettiği için gerçek tarayıcı kullanılır. Yalnız https adresler açılır.
+         */
         @JavascriptInterface
         public void fetchText(String link) {
-            new Thread(() -> {
-                String html = "";
+            if (link == null || !link.startsWith("https://")) {
+                deliverPage("\"\"", "");
+                return;
+            }
+            runOnUiThread(() -> probePage(link));
+        }
+
+        /** Bağlantıyı uygulamanın dışında (tarayıcıda ya da ilgili uygulamada) açar. */
+        @JavascriptInterface
+        public void openLink(String link) {
+            runOnUiThread(() -> {
                 try {
-                    byte[] b = download(link, 600 * 1024);
-                    if (b != null) html = new String(b, StandardCharsets.UTF_8);
+                    Uri u = Uri.parse(link);
+                    String sc = u.getScheme();
+                    if (!"https".equals(sc) && !"http".equals(sc)) return;
+                    startActivity(new Intent(Intent.ACTION_VIEW, u));
                 } catch (Exception e) {
-                    html = "";
+                    // Açacak uygulama yok
                 }
-                final String arg = org.json.JSONObject.quote(html);
+            });
+        }
+
+        /** Yayınlanan sürümlerin listesini indirir (internet varsa) ve sayfadaki KlavuzUpdate işlevine verir. */
+        @JavascriptInterface
+        public void checkUpdate() {
+            new Thread(() -> {
+                String json = "";
+                try {
+                    byte[] b = download(UPDATE_LIST, 2 * 1024 * 1024);
+                    if (b != null) json = new String(b, StandardCharsets.UTF_8);
+                } catch (Exception e) {
+                    json = "";
+                }
+                final String arg = org.json.JSONObject.quote(json);
                 runOnUiThread(() -> {
-                    if (web != null) web.evaluateJavascript("window.KlavuzPage && KlavuzPage(" + arg + ")", null);
+                    if (web != null) web.evaluateJavascript("window.KlavuzUpdate && KlavuzUpdate(" + arg + ")", null);
                 });
+            }).start();
+        }
+
+        /**
+         * Yeni sürümün APK dosyasını indirir ve Android'in kurulum ekranını açar. Yalnız Klavuz'un kendi yayın adresi
+         * kabul edilir; inen dosyanın paket adı denetlenir. İmzayı Android kendisi denetler (farklı imzalı dosya kurulmaz).
+         */
+        @JavascriptInterface
+        public void installUpdate(String link) {
+            if (link == null || !link.startsWith(UPDATE_PREFIX) || !link.endsWith(".apk")) {
+                updateProgress(-1, "Geçersiz güncelleme adresi.");
+                return;
+            }
+            new Thread(() -> {
+                try {
+                    File dir = new File(getCacheDir(), "update");
+                    dir.mkdirs();
+                    File apk = new File(dir, "Klavuz.apk");
+                    if (!downloadTo(link, apk)) {
+                        updateProgress(-1, "");
+                        return;
+                    }
+                    android.content.pm.PackageInfo pi = getPackageManager().getPackageArchiveInfo(apk.getAbsolutePath(), 0);
+                    if (pi == null || !getPackageName().equals(pi.packageName)) {
+                        apk.delete();
+                        updateProgress(-1, "İndirilen dosya Klavuz değil; kurulmadı.");
+                        return;
+                    }
+                    Uri uri = androidx.core.content.FileProvider.getUriForFile(MainActivity.this, getPackageName() + ".files", apk);
+                    Intent in = new Intent(Intent.ACTION_VIEW);
+                    in.setDataAndType(uri, "application/vnd.android.package-archive");
+                    in.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+                    updateProgress(100, "");
+                    runOnUiThread(() -> {
+                        try {
+                            startActivity(in);
+                        } catch (Exception e) {
+                            updateProgress(-1, "Kurulum ekranı açılamadı.");
+                        }
+                    });
+                } catch (Exception e) {
+                    updateProgress(-1, "");
+                }
             }).start();
         }
 
@@ -179,6 +260,145 @@ public class MainActivity extends AppCompatActivity {
                 if (web != null) web.evaluateJavascript("window.KlavuzSaved && KlavuzSaved(" + ok + ")", null);
             });
         }
+    }
+
+    private void updateProgress(int pct, String msg) {
+        final String js = "window.KlavuzUpdateProgress && KlavuzUpdateProgress(" + pct + "," + org.json.JSONObject.quote(msg == null ? "" : msg) + ")";
+        runOnUiThread(() -> {
+            if (web != null) web.evaluateJavascript(js, null);
+        });
+    }
+
+    /** htmlLiteral: JavaScript yazı değeri olarak hazır (tırnaklı) sayfa içeriği. */
+    private void deliverPage(String htmlLiteral, String finalUrl) {
+        final String js = "window.KlavuzPage && KlavuzPage(" + htmlLiteral + "," + org.json.JSONObject.quote(finalUrl == null ? "" : finalUrl) + ")";
+        runOnUiThread(() -> {
+            if (web != null) web.evaluateJavascript(js, null);
+        });
+    }
+
+    private void endProbe() {
+        if (probe != null) {
+            try {
+                probe.stopLoading();
+                probe.destroy();
+            } catch (Exception e) {
+                // zaten kapanmış
+            }
+            probe = null;
+        }
+    }
+
+    /** Ürün sayfasını görünmeyen tarayıcıda açar; yüklenince (ya da 20 sn sonra) içeriğini alır. */
+    private void probePage(String link) {
+        endProbe();
+        probeDone = false;
+        final int seq = ++probeSeq;
+        try {
+            probe = new WebView(this);
+            WebSettings ps = probe.getSettings();
+            ps.setJavaScriptEnabled(true);
+            ps.setDomStorageEnabled(true);
+            ps.setBlockNetworkImage(true);
+            ps.setAllowFileAccess(false);
+            ps.setAllowContentAccess(false);
+            final Runnable grab = () -> grabProbe(link, seq);
+            probe.setWebViewClient(new WebViewClient() {
+                @Override
+                public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                    // Yalnız https sayfalar; uygulama açma (intent, market) ve güvensiz adresler engellenir
+                    return !"https".equals(request.getUrl().getScheme());
+                }
+
+                @Override
+                public void onPageFinished(WebView view, String url) {
+                    ui.removeCallbacks(grab);
+                    ui.postDelayed(grab, 1800);
+                }
+            });
+            probe.loadUrl(link);
+            ui.postDelayed(() -> grabProbe(link, seq), 20000);
+        } catch (Exception e) {
+            endProbe();
+            fallbackFetch(link);
+        }
+    }
+
+    private void grabProbe(String link, int seq) {
+        if (probe == null || probeDone || seq != probeSeq) return;
+        probeDone = true;
+        final String finalUrl = probe.getUrl() == null ? link : probe.getUrl();
+        try {
+            probe.evaluateJavascript("(function(){try{return document.documentElement.outerHTML.slice(0,3000000);}catch(e){return '';}})()", value -> {
+                if (seq == probeSeq) endProbe();
+                if (value == null || value.length() < 400 || "null".equals(value)) {
+                    fallbackFetch(link);
+                } else {
+                    deliverPage(value, finalUrl);
+                }
+            });
+        } catch (Exception e) {
+            endProbe();
+            fallbackFetch(link);
+        }
+    }
+
+    /** Görünmeyen tarayıcı sonuç vermezse sayfa düz indirilir. */
+    private void fallbackFetch(String link) {
+        new Thread(() -> {
+            String html = "";
+            try {
+                byte[] b = download(link, 3 * 1024 * 1024);
+                if (b != null) html = new String(b, StandardCharsets.UTF_8);
+            } catch (Exception e) {
+                html = "";
+            }
+            deliverPage(org.json.JSONObject.quote(html), link);
+        }).start();
+    }
+
+    /** Güncelleme dosyasını diske indirir; ilerlemeyi sayfaya bildirir. Yalnız https; yönlendirmeler izlenir. */
+    private boolean downloadTo(String link, File target) throws Exception {
+        URL url = new URL(link);
+        for (int hop = 0; hop < 6; hop++) {
+            if (!"https".equals(url.getProtocol())) return false;
+            HttpURLConnection c = (HttpURLConnection) url.openConnection();
+            c.setConnectTimeout(10000);
+            c.setReadTimeout(30000);
+            c.setInstanceFollowRedirects(false);
+            c.setRequestProperty("User-Agent", "Klavuz-Android");
+            int code = c.getResponseCode();
+            if (code >= 300 && code < 400) {
+                String loc = c.getHeaderField("Location");
+                c.disconnect();
+                if (loc == null) return false;
+                url = new URL(url, loc);
+                continue;
+            }
+            if (code != 200) {
+                c.disconnect();
+                return false;
+            }
+            long total = c.getContentLength(), done = 0;
+            int last = -1;
+            try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(target)) {
+                byte[] buf = new byte[65536];
+                int n;
+                while ((n = in.read(buf)) > 0) {
+                    out.write(buf, 0, n);
+                    done += n;
+                    int pct = total > 0 ? (int) Math.min(99, done * 100 / total) : 0;
+                    if (pct >= last + 3) {
+                        last = pct;
+                        updateProgress(pct, "");
+                    }
+                }
+            } finally {
+                c.disconnect();
+            }
+            return done > 100000 && (total <= 0 || done == total);
+        }
+        return false;
     }
 
     /** Yalnız kullanıcının paylaştığı adresi indirir; en çok "limit" bayt okur. Yalnız https kabul edilir. */
