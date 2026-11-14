@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.10.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
+- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.11.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -187,3 +187,15 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - Testler: `tests/ornek/ocr-cizgi-yazi.json` (Flowmaster sayfa 6'nın gerçek + OCR yazı konumları; fiyat yok), `tests/e2e.js` 15. adım (tablo resme çevrilip yalnız resim içeren PDF yapılır, OCR ile okunur).
 - Test kancası: `window.KLAVUZ_TEST.api = { readPdf, newStat }`; `KLAVUZ_TEST.ocrPsm`, `ocrConf`, `ocrDump` (temizlenmiş sayfa resmi) yalnız denemelerde.
 - **0.10.1:** Android paketleyicisi (aapt) `vendor/*.gz` dosyalarını açıp uzantısını siler (APK'da `tur.traineddata`). `ocr.js` önce `.gz`, olmazsa uzantısız dosyayı okur. APK'nın `assets/` klasörü `file://` adresiyle ve `--allow-file-access-from-files` ile Chromium'da açılarak OCR denendi, çalıştı. 0.10.0 derlemesi telefonda OCR yapamazdı; kullanıcıya verilmedi.
+
+## Sürüm 0.11.0 ekleri (iki kademeli kategori ağacı)
+
+- **Ağaç (`TREE`, app.js):** 23 ana grup (eski 22 kimlik aynen + yeni `hidrolik` "Hidrolik ve pnömatik"), her birinde 3–14 alt grup (toplam ~125). Alt grup kimliği `ana.alt` (örn. `vana.kuresel`, `rakor.hortum`, `pompa.sintine`). `item.category` / `item.cat2` ana ya da alt grup kimliği tutar; ana grup `mainOf(id)` ile türetilir. Eski kayıtlar ana grup olarak geçerli, **veri taşıma yok**. Ağaç tekne teknik malzemesine göre kuruldu (Flowmaster, Boss, Asel, GS ürün adları incelenerek: glob / köşe, fırtına, hızlı kapama, SDNR, hortum soketi, SAE flanş vb.); mağaza ağacı kopyalanmadı.
+- **Ayırma (`classify(ad, altBaşlık, kırıntı)`):** önce ana grup (ana grubun sözcükleri + alt grupların 4 harf ve üstü / söz öbeği sözcükleri), sonra o ana grubun içinde en çok puan alan alt grup; hiçbiri tutmazsa ana grup ("Diğer ..."). `=` ile başlayan sözcük yalnız alt grubu seçer (örn. `=sintine`: "sintine depo rekoru" pompa sayılmasın). Eşit puanda listede önce gelen alt grup kazanır; genel alt grup ("Rakor ve rekor") bu yüzden sonda. İkinci kategori de alt gruba kadar iner.
+- **Ölçülen (476 gerçek ürün adı):** 91 ürünün ana grubu değişti, hepsi bakıldı: SDNR vanaları cıvatadan vanaya, hortum kelepçeleri hortumdan kelepçeye, hortum rakor / soketleri hortum ve cıvatadan rakora, hava başlıkları / pislik kutusu / kondenstop flanştan doğru gruba; 12 kategorisiz ürün gruba girdi (kruva, kollektör, miçoz, yüksük, hava firarı, pislik tutucu, O-ring). Kategorisiz 53 → 41.
+- **Açılışta:** `db.treeVer !== TREE_VER` ise elle atanmamış bütün ürünler yeniden ayrılır (`reCat`); elle atananlara (`catBy: 'user'`) dokunulmaz.
+- **Görünüm:** Ara > Kategori ana grupları kutu olarak gösterir; ana gruba girince "alt gruplar" kutuları (`#gcard`, `st.sub`), dokununca süzer. Ürün sayfasında kategori yolu (`.crumbs`, `gocat`). Kategori seçme kutusu ana grup başlıklı (`catOptions`).
+- **Kullanıcı düzeltmesi:** Ayarlar > Kategori ağacı: ana / alt grup adı değiştir (`db.catEdit.names`), alt grup ekle / sil (`db.catEdit.subs`, kimlik `ana.uXXXXXX`). Eklenen alt grubun tam adı ana grubu bulmaya katılır, tek sözcükleri yalnız alt grubu seçer; ekleyince elle atanmamış ürünler yeniden ayrılır. Silinen alt gruptaki ürün ve öğrenilmiş atamalar ana gruba geçer.
+- **İnternetten alınan üründe kırıntı yolu:** `crumbOf` (JSON-LD BreadcrumbList, Amazon `#wayfinding-breadcrumbs_feature_div`, genel breadcrumb) → `item.crumb`; ayırmada alt başlık ağırlığında ipucu. Liste sayfasında sayfanın yolu bütün ürünlere uygulanır.
+- Testler: `tests/e2e.js` 16. adım (kırıntıdan alt grup, ürün sayfası yolu, alt grup kutuları ve süzme, alt grup ekle / ad değiştir / sil).
+- Deneme kancası: `KLAVUZ_TEST.api.classify(ad, alt, kırıntı)` → `[kategori, ikinci]`.

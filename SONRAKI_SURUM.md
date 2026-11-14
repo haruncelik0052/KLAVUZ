@@ -1,8 +1,8 @@
 # Klavuz — sonraki sürüm için devir ve istek listesi
 
-## GÜNCEL DEVİR (0.10.1, 14.11.2026) — önce burayı okuyun
+## GÜNCEL DEVİR (0.11.0, 14.11.2026) — önce burayı okuyun
 
-- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.10.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
+- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.11.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
 - **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Öncelik verimli uygulama; ince ayar kullandıkça yapılır.
 - **APK teslimi:** Her sürümde APK sohbetin içinde dosya olarak verilir: push sonrası derleme bitince (yaklaşık 1,5–2 dk)
   `curl -sSL -o apk/Klavuz-<sürüm>.apk https://github.com/haruncelik0052/KLAVUZ/releases/download/test-<commit7>/Klavuz-<commit7>.apk`
@@ -12,7 +12,8 @@
 - **Test:** `node tests/okuyucu.test.js`; `python3 -m http.server 8080` sonra `node tests/e2e.js` (15. adım OCR, yaklaşık 10 sn). İkisi de geçmeden gönderme.
 - **Gerçek kataloglarla deneme:** Drive bağlayıcısının `download_file_content` aracı 10 MB altı PDF'i indirir. 0.10.0'da karşılaştırma Playwright içinde uygulamanın kendi `readPdf` işleviyle yapıldı: `window.KLAVUZ_TEST = {}` ile açılınca `KLAVUZ_TEST.api = { readPdf, newStat }` gelir; `KLAVUZ_TEST.chunk = 1` her sayfadan sonra satır verir. Her okuyucu değişikliğinden önce ve sonra Boss, Asel, Elif Depo, GS Marine Valve çıktısı karşılaştırılır. Gerçek PDF depoya konmaz.
 - **0.10.0 (OCR) yapılanlar:** aşağıda "Sürüm 0.10.0" (DEVIR.md). Ölçülen: Flowmaster 0 → 80 ürün / 600 satır (506 kod, 579 ölçü temiz; masaüstünde 120 sn, telefonda birkaç dakika beklenir); Vamates tanıtım broşürü, ürün tablosu yok (OCR yazıları okur, ürün çıkmaz, sayfa görüntüsü olarak saklanır — doğru davranış); Boss, Asel, Elif birebir aynı; GS'de yan yana PN10/PN16 flanş tablolarında daha önce kaybolan 43 ikinci kod artık ayrı seçenek (eskiler değişmedi).
-- **Telefonda bekleyenler:** 0.9.0'ın tamamı (kendini güncelleme, uygulama içi tarayıcı, ZIP, CSV) ve 0.10.0 OCR: süre, bellek, WebView'da `file://` altında Tesseract worker'ının açılması (rapor "OCR çalışmadı: ..." derse hata metni oradadır).
+- **0.11.0 (kategori ağacı) yapılanlar:** DEVIR.md "Sürüm 0.11.0". Sıradaki iş: 4 (Drive'daki öbür kataloglar), sonra 4b (PDF katalog üretme).
+- **Telefonda bekleyenler:** 0.11.0 kategori ağacı, 0.9.0'ın tamamı (kendini güncelleme, uygulama içi tarayıcı, ZIP, CSV) ve 0.10.0 OCR: süre, bellek, WebView'da `file://` altında Tesseract worker'ının açılması (rapor "OCR çalışmadı: ..." derse hata metni oradadır).
 - **Görünüm kararı:** Alışveriş uygulaması düzeni; Amazon'un adı, logosu, birebir görünümü kopyalanmaz.
 - **Sınır:** 10 MB üstü Drive dosyaları ve yedek dosyası bu ortama indirilemiyor.
 - Ayrıntılı teknik geçmiş `DEVIR.md` içindedir.
@@ -38,13 +39,13 @@ Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (
 - **Test:** `tests/ornek/` altına OCR çıktısından üretilmiş bir sayfa konumu örneği (fiyatlar değiştirilerek); `tests/e2e.js` içinde tarayıcıda yazısı resim olan küçük bir PDF üretilip OCR ile okunduğu denenir (Playwright Chromium'da Tesseract.js çalışır).
 - Sürüm testi maddeleri: taranmış katalog okundu mu, süre, yanlış okunan fiyat / kod örnekleri.
 
-### 3. İki kademeli kategori ağacı (SIRADAKİ İŞ) (kullanıcı isteği: "Amazon'un kategori sistemi gibi")
+### 3. İki kademeli kategori ağacı — YAPILDI (0.11.0) (kullanıcı isteği: "Amazon'un kategori sistemi gibi")
 - Şu an tek kademe: `CATS` (22 grup, anahtar sözcüklerle), `classify`, `autoCat`, `item.category`, `item.cat2`, öğrenme `db.learn`.
 - Yapılacak: ana grup > alt grup (örn. Vana > Küresel vana / Çek valf / Kelebek vana; Pompa > Sintine / Tatlı su / Santrifüj; Rakor ve bağlantı > Nipel / Dirsek / Manşon). Ana sayfada ana gruplar kutu olarak, içine girince alt gruplar. `item.category` alt grubun kimliğini tutar, ana grup ondan türetilir; eski 22 kimlik ana grup olarak geçerli kalır (**veri taşıma gerekmeden**).
 - İnternetten alınan üründe sitenin kırıntı yolu (JSON-LD `BreadcrumbList`, Amazon `#wayfinding-breadcrumbs_feature_div`) kategori ipucu olarak kullanılır.
 - Amazon'un ağacı birebir kopyalanmaz; tekne teknik malzemesine uygun ağaç kurulur. Kullanıcı ağacı uygulamada düzeltebilmeli (ad değiştir, alt grup ekle).
 
-### 4. Drive'daki öbür kataloglar
+### 4. Drive'daki öbür kataloglar (SIRADAKİ İŞ)
 `05_MARKA_PROFILLERI` altında yaklaşık 50 marka klasörü var. Katalogları tek tek indirip (10 MB altı) okuyucudan geçir, okunamayan düzenleri çıkar, en çok ürün kazandıranı önce düzelt. Her değişiklikte Boss, Asel, Elif Depo, GS Marine Valve, Rushwarm, Asmarine, Eser Pompa çıktısı öncekiyle karşılaştırılır.
 
 ### 4b. Klavuz'dan PDF katalog / fiyat listesi üretme (kullanıcının getirdiği Gemini önerisinden alınan fikir)

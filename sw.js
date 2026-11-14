@@ -1,4 +1,4 @@
-const CACHE = 'klavuz-v11';
+const CACHE = 'klavuz-v12';
 const SHELL = ['./', './index.html', './app.js', './okuyucu.js', './ocr.js', './vendor/tesseract.min.js', './vendor/worker.min.js', './vendor/tesseract-core-simd-lstm.wasm.js', './vendor/tesseract-core-lstm.wasm.js', './vendor/tur.traineddata.gz', './vendor/eng.traineddata.gz', './vendor/pdf.min.js', './vendor/pdf.worker.min.js', './vendor/xlsx.full.min.js', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', (e) => {

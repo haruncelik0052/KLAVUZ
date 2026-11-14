@@ -142,6 +142,10 @@
   #home { display:flex; flex-direction:column; gap:10px; } #home:empty, #gcard:empty, #sugg:empty { display:none; }
   .tiles { display:grid; grid-template-columns:repeat(auto-fill,minmax(104px,1fr)); gap:8px; }
   .tile { background:var(--card); color:var(--ink); display:flex; flex-direction:column; align-items:stretch; gap:4px; padding:8px; text-align:left; font-weight:600; font-size:13px; }
+  .tile.on { outline:3px solid var(--gold); }
+  .crumbs { font-size:13px; color:var(--muted); display:flex; flex-wrap:wrap; align-items:center; gap:4px; } .crumbs .link { padding:0; font-size:13px; }
+  .cattree { border-top:1px solid var(--line, #dde3ea); padding:6px 0; } .cattree summary { font-weight:600; padding:6px 0; } .cattree summary small { color:var(--muted); font-weight:500; }
+  .catrow { align-items:center; flex-wrap:nowrap; } .catrow input { flex:1; min-width:0; } .catrow small { color:var(--muted); min-width:24px; text-align:right; }
   .tile .thumb { width:100%; height:auto; aspect-ratio:1; } .tile small { color:var(--muted); font-weight:500; }
   .strip { display:flex; gap:8px; overflow-x:auto; padding-bottom:4px; scroll-snap-type:x proximity; }
   .mini { flex:none; width:132px; background:var(--card); color:var(--ink); border:1px solid var(--line); display:flex; flex-direction:column; align-items:stretch; gap:3px; padding:8px; text-align:left; font-size:13px; scroll-snap-align:start; }

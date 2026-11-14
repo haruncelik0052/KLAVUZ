@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.10.1';
+  var APP_VERSION = '0.11.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -37,7 +37,7 @@
   // ---------- Veri ----------
   var DEFAULT_NOTIFY = { up: true, down: true, below: true, pending: true, check: true };
   function empty() {
-    return { items: {}, offers: {}, history: [], docs: [], cart: [], cartDiscount: 0, feedback: {}, vtest: {}, brands: {}, sellers: {}, learn: { name: {}, tok: {} },
+    return { items: {}, offers: {}, history: [], docs: [], cart: [], cartDiscount: 0, feedback: {}, vtest: {}, brands: {}, sellers: {}, learn: { name: {}, tok: {} }, catEdit: { names: {}, subs: {} },
       settings: { company: '', phone: '', note: 'Fiyatlar KDV hariçtir.', notify: Object.assign({}, DEFAULT_NOTIFY) } };
   }
   var db;
@@ -46,6 +46,7 @@
     d.settings = Object.assign(empty().settings, d.settings || {});
     d.settings.notify = Object.assign({}, DEFAULT_NOTIFY, d.settings.notify || {});
     d.learn = { name: (d.learn && d.learn.name) || {}, tok: (d.learn && d.learn.tok) || {} };
+    d.catEdit = { names: (d.catEdit && d.catEdit.names) || {}, subs: (d.catEdit && d.catEdit.subs) || {} };
     return d;
   }
   function loadLs() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
@@ -227,64 +228,232 @@
     return !it.verified || offersOf(it.id).some(function (o) { return o.status === 'check'; });
   }
 
-  // ---------- Kategori, eş anlamlılar, marka ve satıcı ----------
-  // Kategori ağacının ilk hali. Anahtar sözcükler küçük harf ve Türkçe harfsiz (fold) yazılır.
-  // Uygulama ürünü adına bakarak kendisi ayırır; ayıramadığı "Kategorisiz" kalır, kullanıcı elle atar.
-  var CATS = [
-    ['vana', 'Vana', ['vana', 'valf', 'valve', 'cekvalf', 'kuresel', 'kelebek', 'surgulu', 'klape', 'musluk vana']],
-    ['rakor', 'Rakor ve bağlantı', ['rakor', 'fitting', 'nipel', 'nipple', 'manson', 'dirsek', 'elbow', 'reduksiyon', 'reducer', 'tapa', 'rekor', 'union', 'adaptor', 'adapter', 'kaplin', 'coupling', 'te', 'tee', 'istavroz', 'ek parca']],
-    ['hortum', 'Hortum', ['hortum', 'hose']],
-    ['kelepce', 'Kelepçe', ['kelepce', 'clamp']],
-    ['boru', 'Boru', ['boru', 'pipe', 'tube']],
-    ['flans', 'Flanş', ['flans', 'flange']],
-    ['pompa', 'Pompa', ['pompa', 'pump', 'hidrofor', 'impeller', 'santrifuj']],
-    ['filtre', 'Filtre ve süzgeç', ['filtre', 'filter', 'suzgec', 'strainer', 'separator', 'membran']],
-    ['depo', 'Depo ve tank', ['depo', 'tank', 'bidon']],
-    ['conta', 'Conta ve keçe', ['conta', 'gasket', 'oring', 'o-ring', 'kece', 'seal', 'salmastra']],
-    ['civata', 'Cıvata ve bağlantı elemanı', ['civata', 'somun', 'pul', 'vida', 'bolt', 'nut', 'screw', 'saplama', 'percin', 'dubel']],
-    ['elektrik', 'Elektrik', ['kablo', 'sigorta', 'salter', 'aku', 'battery', 'soket', 'switch', 'role', 'pano', 'invertor', 'redresor', 'fis', 'priz']],
-    ['aydinlatma', 'Aydınlatma', ['lamba', 'led', 'aydinlatma', 'light', 'fener', 'projektor', 'ampul', 'spot']],
-    ['guverte', 'Güverte donanımı', ['mapa', 'koc boynuzu', 'cleat', 'baba', 'mentese', 'hinge', 'kilit', 'tutamak', 'puntel', 'vardavela', 'kapak', 'lumbuz', 'havalandirma', 'makara']],
-    ['demir', 'Demirleme ve halat', ['capa', 'anchor', 'zincir', 'chain', 'irgat', 'windlass', 'halat', 'rope', 'kilitli', 'firdondu']],
-    ['sihhi', 'Banyo ve mutfak', ['batarya', 'musluk', 'lavabo', 'tuvalet', 'wc', 'dus', 'armatur', 'eviye', 'sifon', 'klozet']],
-    ['usturmaca', 'Usturmaca ve branda', ['usturmaca', 'fender', 'branda', 'tente', 'samandira']],
-    ['emniyet', 'Can güvenliği', ['can yelegi', 'can simidi', 'yangin', 'sondurucu', 'isaret fiseg', 'ilk yardim', 'emniyet']],
-    ['kimya', 'Boya ve kimyasal', ['boya', 'macun', 'silikon', 'yapistirici', 'yag', 'temizleyici', 'vernik', 'astar', 'zehirli', 'antifouling', 'gres']],
-    ['motor', 'Motor ve yürütme', ['motor', 'pervane', 'saft', 'anot', 'tutya', 'kayis', 'termostat', 'egzoz', 'buji', 'dumen', 'kumanda']],
-    ['olcu', 'Ölçü ve gösterge', ['manometre', 'gosterge', 'sensor', 'termometre', 'saat', 'debimetre', 'seviye']],
-    ['iklim', 'Isıtma ve soğutma', ['isitici', 'kalorifer', 'klima', 'esanjor', 'boyler', 'boiler', 'sofben', 'buzdolabi']]
+  // ---------- Kategori ağacı, eş anlamlılar, marka ve satıcı ----------
+  // İki kademe: ana grup > alt grup. Anahtar sözcükler küçük harf ve Türkçe harfsiz (fold) yazılır; boşluklu olanlar söz öbeğidir.
+  // Ana grup kimlikleri 0.5.0'dan beri aynıdır (eski kayıtlar ana grup olarak geçerli kalır). Alt grup kimliği "ana.alt" biçimindedir.
+  // Alt grubun anahtar sözcükleri ana grubu bulmaya da katılır (4 harften kısa tek sözcükler ve "=" ile başlayanlar hariç).
+  // Eşit puanda listede önce gelen alt grup seçilir; genel alt grup (örn. "Rakor ve rekor") bu yüzden sondadır.
+  // Kullanıcı adları değiştirebilir, alt grup ekleyebilir (db.catEdit); ağacın kendisi kopyalanmış bir mağaza ağacı değildir.
+  var TREE = [
+    ['vana', 'Vana', ['vana', 'valf', 'valve', 'cekvalf', 'kuresel', 'kelebek', 'surgulu', 'klape', 'musluk vana'], [
+      ['kuresel', 'Küresel vana', ['kuresel', 'ball valve', 'ball valves', 'top vana']],
+      ['kelebek', 'Kelebek vana', ['kelebek', 'butterfly']],
+      ['cek', 'Çek valf ve klape', ['cekvalf', 'cek valf', 'check', 'klape', 'non return', 'swing check', 'dual plate', 'duo check', 'calpara']],
+      ['surgulu', 'Sürgülü (gate) vana', ['surgulu', 'gate valve', 'gate valves', 'siber']],
+      ['globe', 'Glob ve köşe vana', ['globe', 'glob vana', 'angle valve', 'angle valves', 'kosegen', 'kose vana', 'screw down', 'stop valve']],
+      ['hizli', 'Hızlı kapama vanası', ['quick closing', 'hizli kapama']],
+      ['firtina', 'Fırtına (storm) valfi', ['storm valve', 'storm valves', 'firtina']],
+      ['yangin', 'Yangın / hortum vanası', ['hose valve', 'hose valves', 'yangin vana', 'itfaiye']],
+      ['emniyet', 'Emniyet ve tahliye valfi', ['emniyet valf', 'emniyet ventil', 'safety valve', 'relief', 'tahliye valf', 'pressure safety']],
+      ['igne', 'İğne vana', ['igne vana', 'needle']],
+      ['solenoid', 'Solenoid (elektrikli) valf', ['solenoid', 'selenoid', 'magnet valf', 'motorlu vana', 'actuator', 'aktuator']],
+      ['hava', 'Hava firarı ve havalık', ['hava firar', 'air vent', 'air release', 'havalik']],
+      ['kondenstop', 'Kondenstop (buhar kapanı)', ['kondenstop', 'steam trap', 'steam traps']],
+      ['deniz', 'Deniz suyu alış vanası', ['kingston', 'sea cock', 'seacock', 'deniz alis', 'gemi musluk']]]],
+    ['rakor', 'Rakor ve bağlantı', ['rakor', 'fitting', 'nipel', 'nipple', 'manson', 'dirsek', 'elbow', 'reduksiyon', 'reducer', 'tapa', 'rekor', 'union', 'adaptor', 'adapter', 'kaplin', 'coupling', 'te', 'tee', 'istavroz', 'ek parca'], [
+      ['nipel', 'Nipel', ['nipel', 'nipple', 'ara nipel']],
+      ['dirsek', 'Dirsek', ['dirsek', 'elbow', 'lule']],
+      ['te', 'Te ve kruva', ['te', 'tee', 'kruva', 'dortyol', 'istavroz', 'cross']],
+      ['manson', 'Manşon ve kaplin', ['manson', 'kaplin', 'coupling', 'muff']],
+      ['reduksiyon', 'Redüksiyon', ['reduksiyon', 'reducer', 'orantili']],
+      ['tapa', 'Tapa ve kep', ['tapa', 'plug', 'kep']],
+      ['hortum', 'Hortum rakoru ve soketi', ['hortum rakor', 'hortum rekor', 'hortum soket', 'hortum ek', 'hortum uc', 'hose fitting', 'hose connector', 'hose tail', 'doner somun', 'interlok']],
+      ['adaptor', 'Adaptör', ['adaptor', 'adapter']],
+      ['kollektor', 'Kollektör ve dağıtıcı', ['kollektor', 'manifold', 'dagitici']],
+      ['pnomatik', 'Pnömatik ve hızlı bağlantı', ['pnomatik', 'pneumatic', 'otomatik rakor', 'quick coupling', 'hizli baglanti', 'hiz ayar', 'pu nipel']],
+      ['yuksuk', 'Yüksük ve miçoz', ['yuksuk', 'yuksuklu', 'micoz', 'sleeve']],
+      ['perde', 'Perde geçiş', ['perde gecis', 'bulkhead']],
+      ['rakor', 'Rakor ve rekor', ['rakor', 'rekor', 'union', 'konik']]]],
+    ['hortum', 'Hortum', ['hortum', 'hose'], [
+      ['su', 'Su hortumu', ['su hortum', 'water hose', 'seffaf hortum', 'bahce hortum']],
+      ['spiral', 'Spiral ve telli hortum', ['spiral', 'telli', 'suction hose', 'emme hortum']],
+      ['yakit', 'Yakıt hortumu', ['yakit hortum', 'fuel hose', 'benzin hortum', 'mazot hortum']],
+      ['egzoz', 'Egzoz hortumu', ['egzoz hortum', 'exhaust hose', 'wet exhaust']],
+      ['hidrolik', 'Hidrolik hortum', ['hidrolik hortum', 'hydraulic hose', 'r1', 'r2', 'teflon hortum', 'ptfe hose']],
+      ['sanitasyon', 'Pis su (sanitasyon) hortumu', ['sanitasyon', 'sanitation', 'pis su hortum']],
+      ['pnomatik', 'Hava ve pnömatik hortum', ['poliuretan', 'polyamid', 'polyemid', 'pu hortum', 'hava hortum', 'air hose']]]],
+    ['kelepce', 'Kelepçe', ['kelepce', 'clamp'], [
+      ['hortum', 'Hortum kelepçesi', ['hortum kelepce', 'hose clamp', 'sonsuz', 'ayarli hortum']],
+      ['boru', 'Boru kelepçesi', ['boru kelepce', 'pipe clamp', 'u civata']],
+      ['agir', 'Ağır hizmet kelepçesi', ['agir hizmet', 't civata', 't bolt']],
+      ['kablo', 'Plastik kelepçe (kablo bağı)', ['kablo bag', 'cable tie', 'plastik kelepce']]]],
+    ['boru', 'Boru', ['boru', 'pipe', 'tube'], [
+      ['paslanmaz', 'Paslanmaz boru', ['paslanmaz boru', 'stainless pipe', 'stainless tube', 'inox boru']],
+      ['celik', 'Çelik ve galvaniz boru', ['celik boru', 'galvaniz boru', 'siyah boru', 'steel pipe']],
+      ['plastik', 'Plastik boru (PVC, PPR, PE)', ['pvc', 'ppr', 'pe boru', 'polietilen', 'plastik boru']],
+      ['bakir', 'Bakır ve pirinç boru', ['bakir boru', 'copper', 'pirinc boru']]]],
+    ['flans', 'Flanş', ['flans', 'flange'], [
+      ['kor', 'Kör flanş', ['kor flans', 'blind flange', 'blind', 'kep flans']],
+      ['duz', 'Düz (slip on) flanş', ['slip on', 'duz flans', 'plate flange']],
+      ['boyunlu', 'Kaynak boyunlu flanş', ['kaynak boyunlu', 'weld neck', 'alin kaynakli']],
+      ['sae', 'Hidrolik (SAE / CETOP) flanş', ['sae', 'cetop', 'sae flans', 'oringli flans', 'kare flans']],
+      ['disli', 'Dişli flanş', ['disli flans', 'threaded flange']]]],
+    ['pompa', 'Pompa', ['pompa', 'pump', 'hidrofor', 'impeller', 'santrifuj'], [
+      ['sintine', 'Sintine pompası', ['=sintine', '=bilge', 'sintine pompa', 'bilge pump']],
+      ['tatli', 'Tatlı su ve hidrofor', ['hidrofor', 'tatli su pompa', 'fresh water pump', 'pressure pump', 'basinc pompa']],
+      ['santrifuj', 'Santrifüj ve sirkülasyon', ['santrifuj', 'centrifugal', 'sirkulasyon', 'circulation']],
+      ['dalgic', 'Dalgıç pompa', ['dalgic', 'submersible']],
+      ['el', 'El ve ayak pompası', ['el pompa', 'hand pump', 'ayak pompa', 'foot pump']],
+      ['yakit', 'Yakıt ve yağ pompası', ['yakit pompa', 'fuel pump', 'yag pompa', 'transfer pompa']],
+      ['hidrolik', 'Hidrolik pompa', ['hidrolik pompa', 'hydraulic pump', 'disli pompa', 'gear pump']],
+      ['impeller', 'İmpeller ve pompa parçası', ['impeller', 'pompa tamir', 'pump kit', 'mekanik salmastra']]]],
+    ['filtre', 'Filtre ve süzgeç', ['filtre', 'filitre', 'filter', 'suzgec', 'strainer', 'separator', 'membran'], [
+      ['yakit', 'Yakıt filtresi ve separatör', ['yakit filtre', 'fuel filter', 'separator', 'separatorlu', 'racor']],
+      ['deniz', 'Deniz suyu süzgeci', ['deniz suyu suzgec', 'sea water strainer', 'suzgec', 'strainer', 'y strainer', 'mud box', 'mud boxes', 'pislik tutucu']],
+      ['yag', 'Yağ filtresi', ['yag filtre', 'oil filter']],
+      ['hava', 'Hava filtresi', ['hava filtre', 'air filter']],
+      ['su', 'Su arıtma', ['membran', 'aritma', 'sediment', 'karbon filtre', 'watermaker']]]],
+    ['depo', 'Depo ve tank', ['depo', 'tank', 'bidon'], [
+      ['su', 'Su deposu', ['su depo', 'water tank', 'plastik su']],
+      ['yakit', 'Yakıt deposu', ['yakit depo', 'yakit tank', 'fuel tank']],
+      ['atik', 'Pis su ve atık tankı', ['pis su', 'atik', 'waste', 'holding tank', 'siyah su']],
+      ['parca', 'Depo parçası (kapak, gösterge)', ['depo kapag', 'depo rekor', 'tank kapag']]]],
+    ['conta', 'Conta ve keçe', ['conta', 'gasket', 'oring', 'o-ring', 'o ring', 'kece', 'seal', 'salmastra'], [
+      ['oring', 'O-ring', ['oring', 'o ring']],
+      ['conta', 'Flanş ve düz conta', ['conta', 'gasket']],
+      ['kece', 'Keçe ve simering', ['kece', 'seal', 'simering']],
+      ['salmastra', 'Salmastra', ['salmastra', 'packing']]]],
+    ['civata', 'Cıvata ve bağlantı elemanı', ['civata', 'somun', 'pul', 'vida', 'bolt', 'nut', 'screw', 'saplama', 'percin', 'dubel'], [
+      ['civata', 'Cıvata', ['civata', 'bolt', 'banjo']],
+      ['somun', 'Somun', ['somun', 'nut', 'nuts']],
+      ['pul', 'Pul', ['pul', 'washer']],
+      ['vida', 'Vida', ['vida', 'screw']],
+      ['saplama', 'Saplama, perçin, dübel', ['saplama', 'percin', 'dubel', 'rivet']]]],
+    ['elektrik', 'Elektrik', ['kablo', 'sigorta', 'salter', 'aku', 'battery', 'soket', 'switch', 'role', 'pano', 'invertor', 'redresor', 'fis', 'priz'], [
+      ['kablo', 'Kablo', ['kablo', 'cable']],
+      ['sigorta', 'Sigorta ve şalter', ['sigorta', 'salter', 'fuse', 'breaker', 'switch', 'anahtar']],
+      ['aku', 'Akü', ['aku', 'battery']],
+      ['sarj', 'Şarj, redresör, invertör', ['sarj', 'charger', 'redresor', 'invertor', 'inverter']],
+      ['priz', 'Fiş, priz ve soket', ['fis', 'priz', 'soket']],
+      ['pano', 'Pano ve röle', ['pano', 'role', 'relay']]]],
+    ['aydinlatma', 'Aydınlatma', ['lamba', 'led', 'aydinlatma', 'light', 'fener', 'projektor', 'ampul', 'spot'], [
+      ['seyir', 'Seyir feneri', ['seyir', 'navigation light', 'borda', 'pupa', 'silyon', 'fener']],
+      ['sualti', 'Sualtı aydınlatma', ['sualti', 'underwater']],
+      ['projektor', 'Projektör ve spot', ['projektor', 'spot', 'searchlight']],
+      ['ic', 'İç aydınlatma ve ampul', ['ampul', 'tavan', 'led serit', 'bulb']]]],
+    ['guverte', 'Güverte donanımı', ['mapa', 'koc boynuzu', 'cleat', 'baba', 'mentese', 'hinge', 'kilit', 'tutamak', 'puntel', 'vardavela', 'kapak', 'lumbuz', 'havalandirma', 'makara'], [
+      ['baglama', 'Mapa, koç boynuzu, baba', ['mapa', 'koc boynuzu', 'cleat', 'baba']],
+      ['kapak', 'Kapak ve lumbuz', ['kapak', 'lumbuz', 'hatch', 'porthole']],
+      ['mentese', 'Menteşe, kilit, tutamak', ['mentese', 'hinge', 'kilit', 'tutamak', 'handle']],
+      ['korkuluk', 'Vardavela ve puntel', ['vardavela', 'puntel', 'korkuluk', 'rail']],
+      ['havalandirma', 'Havalandırma', ['havalandirma', 'vent', 'ventilator', 'air vent']],
+      ['makara', 'Makara', ['makara', 'block', 'pulley']]]],
+    ['demir', 'Demirleme ve halat', ['capa', 'anchor', 'zincir', 'chain', 'irgat', 'windlass', 'halat', 'rope', 'kilitli', 'firdondu'], [
+      ['capa', 'Çapa', ['capa', 'anchor']],
+      ['zincir', 'Zincir', ['zincir', 'chain']],
+      ['irgat', 'Irgat', ['irgat', 'windlass']],
+      ['halat', 'Halat', ['halat', 'rope']],
+      ['kilit', 'Kilit ve fırdöndü', ['kilitli', 'firdondu', 'shackle', 'swivel']]]],
+    ['sihhi', 'Banyo ve mutfak', ['batarya', 'musluk', 'lavabo', 'tuvalet', 'wc', 'dus', 'armatur', 'eviye', 'sifon', 'klozet'], [
+      ['tuvalet', 'Tuvalet (WC)', ['tuvalet', 'wc', 'klozet', 'toilet']],
+      ['batarya', 'Batarya ve musluk', ['batarya', 'musluk', 'armatur', 'faucet']],
+      ['dus', 'Duş', ['dus', 'shower']],
+      ['lavabo', 'Lavabo, eviye, sifon', ['lavabo', 'eviye', 'sifon', 'sink']]]],
+    ['usturmaca', 'Usturmaca ve branda', ['usturmaca', 'fender', 'branda', 'tente', 'samandira'], [
+      ['usturmaca', 'Usturmaca', ['usturmaca', 'fender']],
+      ['branda', 'Branda ve tente', ['branda', 'tente', 'bimini']],
+      ['samandira', 'Şamandıra', ['samandira', 'buoy']]]],
+    ['emniyet', 'Can güvenliği', ['can yelegi', 'can simidi', 'yangin', 'sondurucu', 'isaret fiseg', 'ilk yardim', 'emniyet'], [
+      ['yelek', 'Can yeleği ve simidi', ['can yelegi', 'can simidi', 'life jacket', 'lifebuoy']],
+      ['yangin', 'Yangın söndürme', ['yangin', 'sondurucu', 'extinguisher']],
+      ['isaret', 'İşaret fişeği', ['isaret fiseg', 'flare']],
+      ['ilkyardim', 'İlk yardım', ['ilk yardim', 'first aid']]]],
+    ['kimya', 'Boya ve kimyasal', ['boya', 'macun', 'silikon', 'yapistirici', 'yag', 'temizleyici', 'vernik', 'astar', 'zehirli', 'antifouling', 'gres'], [
+      ['boya', 'Boya, astar, vernik', ['boya', 'astar', 'vernik', 'antifouling', 'zehirli']],
+      ['yapistirici', 'Silikon, macun, yapıştırıcı', ['silikon', 'macun', 'yapistirici', 'sealant']],
+      ['yag', 'Yağ ve gres', ['yag', 'gres', 'grease']],
+      ['temizlik', 'Temizlik', ['temizleyici', 'cleaner', 'sampuan']]]],
+    ['motor', 'Motor ve yürütme', ['motor', 'pervane', 'saft', 'anot', 'tutya', 'kayis', 'termostat', 'egzoz', 'buji', 'dumen', 'kumanda'], [
+      ['pervane', 'Pervane ve şaft', ['pervane', 'saft', 'propeller']],
+      ['anot', 'Anot (tutya)', ['anot', 'tutya', 'anode']],
+      ['dumen', 'Dümen ve kumanda', ['dumen', 'kumanda', 'steering']],
+      ['egzoz', 'Egzoz', ['egzoz', 'exhaust', 'susturucu']],
+      ['bakim', 'Kayış, termostat, buji', ['kayis', 'termostat', 'buji', 'belt']]]],
+    ['olcu', 'Ölçü ve gösterge', ['manometre', 'gosterge', 'sensor', 'termometre', 'saat', 'debimetre', 'seviye'], [
+      ['manometre', 'Manometre', ['manometre', 'pressure gauge']],
+      ['termometre', 'Termometre', ['termometre', 'thermometer']],
+      ['seviye', 'Seviye göstergesi', ['seviye', 'level']],
+      ['sensor', 'Sensör ve debimetre', ['sensor', 'debimetre', 'flow meter']]]],
+    ['iklim', 'Isıtma ve soğutma', ['isitici', 'kalorifer', 'klima', 'esanjor', 'boyler', 'boiler', 'sofben', 'buzdolabi'], [
+      ['isitma', 'Isıtıcı ve boyler', ['isitici', 'kalorifer', 'boyler', 'boiler', 'sofben', 'heater']],
+      ['klima', 'Klima', ['klima', 'air condition']],
+      ['esanjor', 'Eşanjör', ['esanjor', 'heat exchanger']],
+      ['buzdolabi', 'Buzdolabı', ['buzdolabi', 'fridge', 'refrigerator']]]],
+    ['hidrolik', 'Hidrolik ve pnömatik', ['hidrolik', 'hydraulic', 'pnomatik', 'pneumatic', 'silindir', 'cylinder'], [
+      ['silindir', 'Silindir', ['silindir', 'cylinder', 'piston']],
+      ['valf', 'Hidrolik valf ve blok', ['yon valf', 'directional', 'valf blok', 'kontrol valf']],
+      ['unite', 'Hidrolik ünite ve motor', ['hidrolik unite', 'power pack', 'hidrolik motor']],
+      ['pnomatik', 'Pnömatik eleman', ['pnomatik', 'pneumatic', 'susturucu', 'silencer', 'sartlandirici']]]]
   ];
-  function catName(id) { for (var i = 0; i < CATS.length; i++) if (CATS[i][0] === id) return CATS[i][1]; return id ? id : 'Kategorisiz'; }
-  // Ürün adından kategori bul. Sıra: elle öğretilen ad -> anahtar sözcükler -> elle öğretilen sözcükler.
-  // "hortum kelepçesi" gibi adlarda ek almış sözcük (kelepçesi) asıl üründür; ona daha çok puan verilir.
-  function classify(name, sub) {
-    var L = db.learn, fn = fold(name);
-    if (L.name[fn]) return L.name[fn];
-    var nameToks = fn.split(/[^a-z0-9]+/).filter(Boolean), toks = nameToks.concat(fold(sub).split(/[^a-z0-9]+/).filter(Boolean));
-    var full = toks.join(' '), score = {}, first = {};
-    function add(c, v, i) { score[c] = (score[c] || 0) + v; if (!(c in first) || i < first[c]) first[c] = i; }
-    toks.forEach(function (t, i) {
-      var w = i < nameToks.length ? 2 : 1;
-      CATS.forEach(function (c) {
-        c[2].forEach(function (k) {
-          if (k.indexOf(' ') >= 0) return;
-          if (t === k) add(c[0], 2 * w, i);
-          else if (k.length >= 4 && t.indexOf(k) === 0) add(c[0], 3 * w, i);
-        });
+  var catV = 0, treeC = null;
+  function tree() {
+    var ed = db.catEdit;
+    if (treeC && treeC.ed === ed && treeC.v === catV) return treeC.t;
+    var t = TREE.map(function (m) {
+      // "=" ile başlayan sözcük yalnız alt grubu seçer, ana grubu bulmaya katılmaz (örn. "sintine" tek başına pompa demek değildir)
+      var subs = m[3].map(function (s) { var id = m[0] + '.' + s[0]; return { id: id, name: ed.names[id] || s[1], kw: s[2].map(function (k) { return k.replace(/^=/, ''); }), own: s[2].filter(function (k) { return k[0] === '='; }).map(function (k) { return k.slice(1); }) }; });
+      // Kullanıcının alt grubu: tam adı ana grubu bulmaya katılır, tek tek sözcükleri yalnız alt grubu seçer
+      (ed.subs[m[0]] || []).forEach(function (u) { var kw = u.kw || []; subs.push({ id: u.id, name: ed.names[u.id] || u.name, kw: kw, own: kw.filter(function (k) { return k.indexOf(' ') < 0; }), user: true }); });
+      var all = m[2].slice();
+      subs.forEach(function (s) { s.kw.forEach(function (k) { if ((k.length >= 4 || k.indexOf(' ') >= 0) && all.indexOf(k) < 0 && (s.own || []).indexOf(k) < 0) all.push(k); }); });
+      return { id: m[0], name: ed.names[m[0]] || m[1], kw: m[2], all: all, subs: subs };
+    });
+    treeC = { ed: ed, v: catV, t: t };
+    return t;
+  }
+  function mainOf(id) { return String(id || '').split('.')[0]; }
+  function mainNode(id) { var m = mainOf(id), t = tree(); for (var i = 0; i < t.length; i++) if (t[i].id === m) return t[i]; return null; }
+  function subNode(id) { var m = mainNode(id); if (!m || id === m.id) return null; for (var i = 0; i < m.subs.length; i++) if (m.subs[i].id === id) return m.subs[i]; return null; }
+  function catName(id) {
+    if (!id) return 'Kategorisiz';
+    var m = mainNode(id); if (!m) return id;
+    var s = subNode(id); return s ? m.name + ' › ' + s.name : m.name;
+  }
+  function subLabel(id) { var s = subNode(id); return s ? s.name : 'Diğer ' + (mainNode(id) ? mainNode(id).name.toLocaleLowerCase('tr-TR') : ''); }
+  // Sözcüklerin bir anahtar listesine puanı. Ad sözcükleri 2 kat sayılır; ek almış sözcük (kelepçesi) önek eşleşmesiyle daha çok puan alır.
+  function kwScore(tk, kws) {
+    var s = 0, f = Infinity;
+    tk.toks.forEach(function (t, i) {
+      var w = i < tk.nameN ? 2 : 1;
+      kws.forEach(function (k) {
+        if (k.indexOf(' ') >= 0) return;
+        if (t === k) { s += 2 * w; if (i < f) f = i; }
+        else if (k.length >= 4 && t.indexOf(k) === 0) { s += 3 * w; if (i < f) f = i; }
       });
     });
-    CATS.forEach(function (c) { c[2].forEach(function (k) { if (k.indexOf(' ') >= 0 && full.indexOf(k) >= 0) add(c[0], 6, 0); }); });
+    kws.forEach(function (k) { if (k.indexOf(' ') >= 0 && tk.full.indexOf(k) >= 0) { s += 6; f = 0; } });
+    return { s: s, f: f };
+  }
+  function bestSub(m, tk) {
+    var best = null, bs = 0;
+    m.subs.forEach(function (s) { var r = kwScore(tk, s.kw); if (r.s > bs) { bs = r.s; best = s; } });
+    return best ? best.id : m.id;
+  }
+  // Ürün adından kategori bul. Sıra: elle öğretilen ad -> anahtar sözcükler (ana grup, sonra alt grup) -> elle öğretilen sözcükler.
+  // crumb: internetten alınan üründe sitenin kategori yolu (ipucu olarak, alt başlık ağırlığında)
+  function classify(name, sub, crumb) {
+    var L = db.learn, fn = fold(name);
+    classify.second = '';
+    if (L.name[fn] && mainNode(L.name[fn])) return L.name[fn];
+    var nameToks = fn.split(/[^a-z0-9]+/).filter(Boolean);
+    var toks = nameToks.concat(fold(sub).split(/[^a-z0-9]+/).filter(Boolean), fold(crumb).split(/[^a-z0-9]+/).filter(Boolean));
+    var tk = { toks: toks, nameN: nameToks.length, full: toks.join(' ') }, score = {}, first = {};
+    tree().forEach(function (m) { var r = kwScore(tk, m.all); if (r.s) { score[m.id] = r.s; first[m.id] = r.f; } });
     if (!Object.keys(score).length) {
-      nameToks.forEach(function (t, i) { var lv = L.tok[t]; if (lv) Object.keys(lv).forEach(function (c) { add(c, lv[c], i); }); });
+      // Elle öğretilen sözcükler (alt grup kimliği de olabilir)
+      var lv = {};
+      nameToks.forEach(function (t) { var x = L.tok[t]; if (x) Object.keys(x).forEach(function (c) { if (mainNode(c)) lv[c] = (lv[c] || 0) + x[c]; }); });
+      var lb = ''; Object.keys(lv).forEach(function (c) { if (!lb || lv[c] > lv[lb]) lb = c; });
+      return lb;
     }
     var best = '', second = '';
     Object.keys(score).forEach(function (c) { if (!best || score[c] > score[best] || (score[c] === score[best] && first[c] < first[best])) best = c; });
     // İkinci kategori: ürün iki gruba da giriyorsa (örn. "hortum kelepçesi" -> Kelepçe ve Hortum) ikisinde de görünür
     Object.keys(score).forEach(function (c) { if (c !== best && score[c] >= 4 && (!second || score[c] > score[second])) second = c; });
-    classify.second = second;
-    return best;
+    classify.second = second ? bestSub(mainNode(second), tk) : '';
+    return bestSub(mainNode(best), tk);
   }
-  function autoCat(it) { it.category = classify(it.name, it.sub); it.cat2 = it.category ? classify.second : ''; it.catBy = 'auto'; }
+  function autoCat(it) { it.category = classify(it.name, it.sub, it.crumb); it.cat2 = it.category ? classify.second : ''; it.catBy = 'auto'; }
   // Elle atanan kategoriyi öğren ve henüz elle atanmamış benzer ürünlere uygula.
   function setCategory(it, cat) {
     it.category = cat; it.catBy = 'user';
@@ -297,9 +466,45 @@
     } else delete L.name[fn];
     Object.values(db.items).forEach(function (x) {
       if (x === it || x.catBy === 'user') return;
-      var c = classify(x.name, x.sub); if (c && c !== x.category) { x.category = c; x.cat2 = classify.second; x.catBy = 'auto'; n++; }
+      var c = classify(x.name, x.sub, x.crumb); if (c && c !== x.category) { x.category = c; x.cat2 = classify.second; x.catBy = 'auto'; n++; }
     });
     return n;
+  }
+  // Kullanıcının ağaç düzeltmeleri: ad değiştirme, alt grup ekleme / silme
+  function renameCat(id, name) {
+    name = String(name || '').trim(); if (!mainNode(id)) return;
+    if (name) db.catEdit.names[id] = name; else delete db.catEdit.names[id];
+    catV++;
+  }
+  function addSubCat(mainId, name) {
+    var m = mainNode(mainId); name = String(name || '').trim(); if (!m || !name) return null;
+    var f = fold(name), mk = m.kw;
+    var kw = [f].concat(f.split(/[^a-z0-9]+/).filter(function (t) { return t.length >= 3 && mk.indexOf(t) < 0; }));
+    var u = { id: m.id + '.u' + uid().slice(0, 6), name: name, kw: kw };
+    (db.catEdit.subs[m.id] = db.catEdit.subs[m.id] || []).push(u); catV++;
+    return u.id;
+  }
+  function delSubCat(id) {
+    var m = mainOf(id), list = db.catEdit.subs[m] || [];
+    db.catEdit.subs[m] = list.filter(function (u) { return u.id !== id; }); delete db.catEdit.names[id]; catV++;
+    var L = db.learn;
+    Object.keys(L.name).forEach(function (k) { if (L.name[k] === id) L.name[k] = m; });
+    Object.keys(L.tok).forEach(function (t) { if (L.tok[t][id]) { L.tok[t][m] = (L.tok[t][m] || 0) + L.tok[t][id]; delete L.tok[t][id]; } });
+    Object.values(db.items).forEach(function (it) { if (it.category === id) it.category = m; if (it.cat2 === id) it.cat2 = m; });
+  }
+  // Elle atanmamış bütün ürünleri ağaca göre yeniden ayır (yeni sürüm, yeni alt grup)
+  var TREE_VER = 2;
+  function reCat() {
+    var n = 0;
+    Object.values(db.items).forEach(function (it) { if (it.catBy === 'user') return; var c0 = it.category, c1 = it.cat2; autoCat(it); if (it.category !== c0 || it.cat2 !== c1) n++; });
+    return n;
+  }
+  // Kategori seçme kutusu: ana gruplar başlık, altında "genel" ve alt gruplar
+  function catOptions(sel) {
+    return tree().map(function (m) {
+      return '<optgroup label="' + esc(m.name) + '"><option value="' + m.id + '"' + (sel === m.id ? ' selected' : '') + '>' + esc(m.name) + ' (genel)</option>' +
+        m.subs.map(function (s) { return '<option value="' + s.id + '"' + (sel === s.id ? ' selected' : '') + '>' + esc(m.name + ' › ' + s.name) + '</option>'; }).join('') + '</optgroup>';
+    }).join('');
   }
   // Tarifle arama için Türkçe - İngilizce eş anlamlılar (fold edilmiş)
   var SYN = [['vana', 'valf', 'valve'], ['hortum', 'hose'], ['rakor', 'fitting', 'baglanti'], ['kelepce', 'clamp'], ['pompa', 'pump'], ['flans', 'flange'],
@@ -1267,7 +1472,7 @@
   // Gruplama: kategori, marka, satıcı ya da belgeye göre. Bir ürün birden çok satıcı / belge grubunda olabilir.
   var DIMS = [['kat', 'Kategori'], ['marka', 'Marka'], ['satici', 'Satıcı'], ['belge', 'Belge']];
   function groupsOf(it) {
-    if (st.dim === 'kat') return it.cat2 && it.cat2 !== it.category ? [it.category || '', it.cat2] : [it.category || ''];
+    if (st.dim === 'kat') { var m1 = mainOf(it.category), m2 = mainOf(it.cat2); return m2 && m2 !== m1 ? [m1, m2] : [m1]; }
     if (st.dim === 'marka') return [it.brand || ''];
     var o = {}; offersOf(it.id).forEach(function (x) { o[st.dim === 'satici' ? (x.supplier || '') : (x.docId || '')] = 1; });
     return Object.keys(o);
@@ -1318,9 +1523,25 @@
       hm += '<h3 class="shelf">Tüm ürünler <small>' + base.length + '</small></h3>';
     }
     $('#home').innerHTML = hm; hydrateImages($('#home'));
-    var items = (st.grp == null ? base : base.filter(function (it) { return groupsOf(it).indexOf(st.grp) >= 0; }))
-      .sort(function (a, b) { return a.name.localeCompare(b.name, 'tr') || String(a.sub || '').localeCompare(String(b.sub || ''), 'tr'); });
-    $('#gcard').innerHTML = st.grp && (st.dim === 'marka' || st.dim === 'satici') ? profileCard(st.dim, st.grp) : '';
+    var items = st.grp == null ? base : base.filter(function (it) { return groupsOf(it).indexOf(st.grp) >= 0; });
+    // Kategori içinde alt gruplar: resimli kutular; dokununca o alt grup süzülür
+    var subHtml = '';
+    if (st.dim === 'kat' && st.grp) {
+      var sc = {}, srep = {};
+      var subsOf = function (it) { return [it.category, it.cat2].filter(function (c) { return c && mainOf(c) === st.grp; }).filter(function (c, i, a) { return a.indexOf(c) === i; }); };
+      items.forEach(function (it) { subsOf(it).forEach(function (c) { sc[c] = (sc[c] || 0) + 1; if (!srep[c] || (!srep[c].hasImg && it.hasImg)) srep[c] = it; }); });
+      if (st.sub && !sc[st.sub]) st.sub = null;
+      var sk = Object.keys(sc).sort(function (a, b) { return (a === st.grp) - (b === st.grp) || sc[b] - sc[a]; });
+      if (sk.length > 1 || (sk.length === 1 && sk[0] !== st.grp)) {
+        subHtml = '<h3 class="shelf">' + esc(catName(st.grp)) + ' · alt gruplar</h3><div class="tiles">' + sk.map(function (c) {
+          return '<button class="tile' + (st.sub === c ? ' on' : '') + '" data-act="sub" data-id="' + esc(c) + '">' + thumb(srep[c]) + '<b>' + esc(subLabel(c)) + '</b><small>' + sc[c] + ' ürün</small></button>';
+        }).join('') + '</div>';
+      }
+      if (st.sub) items = items.filter(function (it) { return subsOf(it).indexOf(st.sub) >= 0; });
+    }
+    items = items.sort(function (a, b) { return a.name.localeCompare(b.name, 'tr') || String(a.sub || '').localeCompare(String(b.sub || ''), 'tr'); });
+    $('#gcard').innerHTML = st.grp && (st.dim === 'marka' || st.dim === 'satici') ? profileCard(st.dim, st.grp) : subHtml;
+    if (subHtml) hydrateImages($('#gcard'));
     $('#sugg').innerHTML = q ? suggestions(q) : '';
     $('#results').innerHTML = items.length ? items.slice(0, 200).map(card).join('') + (items.length > 200 ? '<p class="muted">' + items.length + ' üründen ilk 200 tanesi gösteriliyor. Daraltmak için arayın ya da bir grup seçin.</p>' : '') :
       '<p class="muted">' + (Object.keys(db.items).length ? 'Sonuç yok.' : 'Henüz ürün yok. Belge sekmesinden bir katalog yükleyin.') + '</p>';
@@ -1389,7 +1610,8 @@
     if (!it.category) return [];
     var tk = tokens(it.name), sz = sizeNum(sel && sel.size), out = [];
     Object.values(db.items).forEach(function (x) {
-      if (x.id === it.id || (x.category !== it.category && x.cat2 !== it.category)) return;
+      var cm = mainOf(it.category);
+      if (x.id === it.id || (mainOf(x.category) !== cm && mainOf(x.cat2) !== cm)) return;
       var t2 = tokens(x.name), common = tk.filter(function (t) { return t2.indexOf(t) >= 0; }).length;
       var offs = offersOf(x.id), score = tk.length ? common / Math.max(tk.length, t2.length, 1) : 0;
       var same = sz != null ? offs.filter(function (o) { return sizeNum(o.size) === sz; })[0] : null;
@@ -1424,7 +1646,7 @@
     var n = st.newProd, name = (n.name || '').trim(); if (!name) return toast('Ürün adını yazın.');
     var seller = (n.seller || '').trim() || (n.brand || '').trim() || 'Elle eklenen', brand = (n.brand || '').trim() || seller;
     var price = n.price === '' || n.price == null ? null : num(n.price);
-    var item = { id: uid(), name: name, sub: '', brand: brand, category: '', note: '', verified: true, hasImg: false };
+    var item = { id: uid(), name: name, sub: '', brand: brand, category: '', note: '', verified: true, hasImg: false, crumb: n.crumb || '' };
     autoCat(item); db.items[item.id] = item;
     if (n.img) attachImg(item, n.img);
     var o = { id: uid(), itemId: item.id, supplier: seller, code: (n.code || '').trim(), key: codeKey(n.code), size: (n.size || '').trim(), specs: '', listPrice: price, priceVat: null,
@@ -1464,6 +1686,28 @@
       .replace(/\s*[|:–-]\s*(amazon(\.com(\.tr)?)?|hepsiburada(\.com)?|trendyol(\.com)?|n11(\.com)?)\b.*$/i, '').replace(/^amazon\.com(\.tr)?\s*:\s*/i, '').replace(/\s+/g, ' ').trim();
   }
   // Ürün sayfasından ad, fiyat, resim, marka ve kod. Önce sitenin yapısal verisi (JSON-LD), sonra Amazon'a özgü alanlar, sonra genel etiketler.
+  // Sitenin kategori yolu (kırıntı yolu): JSON-LD BreadcrumbList, Amazon üst şeridi ya da genel breadcrumb.
+  // Kategori bulmada ipucu olarak kullanılır; mağaza ağacı kopyalanmaz.
+  function crumbOf(doc) {
+    var parts = [];
+    function walk(x) {
+      if (!x || parts.length || typeof x !== 'object') return;
+      if (Array.isArray(x)) return x.forEach(walk);
+      if (x['@type'] === 'BreadcrumbList' && Array.isArray(x.itemListElement)) {
+        x.itemListElement.slice().sort(function (a, b) { return (a.position || 0) - (b.position || 0); }).forEach(function (e) {
+          var n = e && (e.name || (e.item && typeof e.item === 'object' && e.item.name)); if (n) parts.push(String(n));
+        });
+        return;
+      }
+      if (x['@graph']) walk(x['@graph']);
+    }
+    doc.querySelectorAll('script[type="application/ld+json"]').forEach(function (sc) { try { walk(JSON.parse(sc.textContent)); } catch (e) {} });
+    if (!parts.length) {
+      var els = doc.querySelectorAll('#wayfinding-breadcrumbs_feature_div li a, nav[aria-label*="readcrumb"] a, .breadcrumb a, .breadcrumbs a, [itemtype*="BreadcrumbList"] [itemprop="name"]');
+      Array.prototype.forEach.call(els, function (e) { var t = String(e.textContent || '').replace(/\s+/g, ' ').trim(); if (t && parts.indexOf(t) < 0) parts.push(t); });
+    }
+    return parts.filter(function (t) { return t.length <= 60 && !/^(ana ?sayfa|home|hepsiburada|trendyol|amazon(\.com)?(\.tr)?|n11|tüm kategoriler)$/i.test(t); }).slice(0, 6).join(' > ');
+  }
   function extractProduct(html, url) {
     var out = {}, doc;
     try { doc = new DOMParser().parseFromString(html, 'text/html'); } catch (e) { return out; }
@@ -1527,6 +1771,7 @@
     out.cur = /EUR|€/i.test(out.cur) ? 'EUR' : (/USD|\$/i.test(out.cur) ? 'USD' : (/TRY|TL|₺/i.test(out.cur) ? 'TL' : ''));
     try { if (out.img) out.img = new URL(out.img, url || undefined).href; } catch (e) {}
     if (!/^https:/.test(out.img || '')) out.img = '';
+    out.crumb = crumbOf(doc);
     var canon = attr('link[rel="canonical"]', 'href');
     try { if (canon) canon = new URL(canon, url || undefined).href; } catch (e) { canon = ''; }
     out.link = /^https:/.test(canon || '') ? canon : (/^https:/.test(url || '') ? url : '');
@@ -1610,14 +1855,14 @@
   }
   // Tarayıcıdaki "Klavuz'a al": ürün sayfasıysa tek ürün formu, liste sayfasıysa seçmeli liste açılır
   window.KlavuzGrab = function (html, url) {
-    var one = html ? extractProduct(html, url) : {}, list = html ? extractList(html, url) : [], shop = shopOf(url);
+    var one = html ? extractProduct(html, url) : {}, list = html ? extractList(html, url) : [], shop = shopOf(url), crumb = one.crumb || '';
     if (one.blocked) return toast('Site bu sayfayı robot denetimine aldı. Sayfada denetimi geçip yeniden "Klavuz\'a al" deyin.');
     if (one.strong || (list.length < 2 && one.name && (one.price != null || one.img))) {
       st.newProd = { name: (one.name || '').slice(0, 200), link: one.link || url, seller: shop, brand: (one.brand || '').slice(0, 60), code: (one.code || '').slice(0, 40), size: '',
-        price: one.price == null ? '' : one.price, cur: one.cur || 'TL', img: '', busy: false, got: true };
+        price: one.price == null ? '' : one.price, cur: one.cur || 'TL', img: '', busy: false, got: true, crumb: crumb };
       st.grab = null;
       if (one.img && window.KlavuzAndroid && KlavuzAndroid.fetchImage) KlavuzAndroid.fetchImage(one.img);
-    } else if (list.length >= 2) { st.grab = { items: list, seller: shop, brand: '', off: {}, url: url }; st.newProd = null; }
+    } else if (list.length >= 2) { st.grab = { items: list, seller: shop, brand: '', off: {}, url: url, crumb: crumb }; st.newProd = null; }
     else return toast('Bu sayfada ürün bulunamadı. Ürünün kendi sayfasını ya da bir arama sonucu sayfasını açıp yeniden deneyin.');
     st.item = null; st.docView = null; st.tab = 'katalog'; render();
     var el = $('#grabbox') || $('#newprod'); if (el) el.scrollIntoView();
@@ -1670,7 +1915,7 @@
         }
         old.updated = today(); upd++; return;
       }
-      var item = { id: uid(), name: x.name, sub: '', brand: (x.brand || '').trim() || brand, category: '', catBy: 'auto', note: '', verified: true, hasImg: false };
+      var item = { id: uid(), name: x.name, sub: '', brand: (x.brand || '').trim() || brand, category: '', catBy: 'auto', note: '', verified: true, hasImg: false, crumb: g.crumb || '' };
       autoCat(item); db.items[item.id] = item;
       var o = { id: uid(), itemId: item.id, supplier: seller, code: x.code || '', key: codeKey(x.code), size: '', specs: '', listPrice: x.price, priceVat: null,
         cur: x.cur || 'TL', supDisc: 0, sellPrice: x.price, lastDir: null, status: 'ok', why: '', updated: today(), docId: '', link: x.link || '' };
@@ -1706,6 +1951,7 @@
     if (p.brand && !n.brand) n.brand = p.brand.slice(0, 60);
     if (p.code && !n.code) n.code = p.code.slice(0, 40);
     if (p.link) n.link = p.link;
+    if (p.crumb) n.crumb = p.crumb;
     if (p.link && (!n.seller || /^(a\.co|amzn|ty\.gl|hb\.biz|bit\.ly)/.test(n.seller))) { try { n.seller = new URL(p.link).hostname.replace(/^www\./, ''); } catch (e) {} }
     if (p.img && window.KlavuzAndroid && KlavuzAndroid.fetchImage) KlavuzAndroid.fetchImage(p.img);
     n.got = !!(p.name || p.price != null || p.img);
@@ -1741,8 +1987,8 @@
       '<button class="ghost" data-act="edit" data-id="' + sel.id + '">Düzelt</button>' +
       '<button class="ghost" data-act="nextcheck" data-id="' + id + '">Sonraki kontrol →</button></div></div>';
     var cats = '<div class="card"><h3>Kategori</h3>' +
-      '<label class="catsel">Kategori <select data-cat="' + id + '"><option value="">Kategorisiz</option>' + CATS.map(function (c) { return '<option value="' + c[0] + '"' + (it.category === c[0] ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') + '</select></label>' +
-      '<label class="catsel">İkinci kategori <select data-cat2="' + id + '"><option value="">Yok</option>' + CATS.map(function (c) { return '<option value="' + c[0] + '"' + (it.cat2 === c[0] ? ' selected' : '') + '>' + c[1] + '</option>'; }).join('') + '</select></label></div>';
+      '<label class="catsel">Kategori <select data-cat="' + id + '"><option value="">Kategorisiz</option>' + catOptions(it.category) + '</select></label>' +
+      '<label class="catsel">İkinci kategori <select data-cat2="' + id + '"><option value="">Yok</option>' + catOptions(it.cat2) + '</select></label></div>';
     var specRows = sel.specs ? sel.specs.split(' · ').map(function (x) {
       var k = x.indexOf(': ');
       return k > 0 && k < 40 ? '<div class="kv"><span>' + esc(x.slice(0, k)) + '</span><b>' + esc(x.slice(k + 2)) + '</b></div>' : '<div class="kv one">' + esc(x) + '</div>';
@@ -1750,6 +1996,8 @@
     var sups = Array.from(new Set(offs.map(function (o) { return o.supplier; })));
     return '<button class="link" data-act="back">← Geri</button>' +
       '<div class="card detail"><div class="dgrid"><div>' + thumb(it, 'hero') + '</div><div class="dinfo">' +
+      '<div class="crumbs">' + (it.category ? '<button class="link" data-act="gocat" data-id="' + esc(mainOf(it.category)) + '">' + esc(mainNode(it.category) ? mainNode(it.category).name : 'Kategorisiz') + '</button>' +
+        (subNode(it.category) ? ' › <button class="link" data-act="gocat" data-id="' + esc(it.category) + '">' + esc(subNode(it.category).name) + '</button>' : '') : '<span class="muted">Kategorisiz</span>') + '</div>' +
       '<button class="link brandlink" data-act="gobrand" data-id="' + esc(it.brand) + '">' + esc(it.brand) + '</button>' +
       '<h2>' + esc(it.name) + '</h2>' + (it.sub ? '<div class="sub">' + esc(it.sub) + '</div>' : '') +
       '<div class="muted">' + (sel.code ? 'Kod ' + esc(sel.code) + ' · ' : '') + 'Satıcı: ' + esc(sups.join(', ')) + '</div>' +
@@ -1959,8 +2207,16 @@
   // Sürüm testi: markaya değil sistemin kendisine yönelik maddeler. Hangi belgeyle denendiği not kutusuna yazılır.
   var VTEST = [
     ['Kurulum ve güncelleme', [
-      ['g3', 'Bu sürümü dosyadan değil, 0.9.0 içinden kurdum: Ayarlar > Uygulama bilgileri > "Güncellemeyi denetle" > "İndir ve kur"; kurulum ekranı açıldı'],
+      ['g3', 'Bu sürümü dosyadan değil, önceki sürümün içinden kurdum: Ayarlar > Uygulama bilgileri > "Güncellemeyi denetle" > "İndir ve kur"; kurulum ekranı açıldı'],
       ['k1', 'Kurulumdan sonra ürünlerim, resimlerim ve ayarlarım duruyor']]],
+    ['Kategori ağacı', [
+      ['c1', 'Ara > Kategori: ana gruplar kutu olarak geliyor; birine dokununca içinde alt gruplar (örn. Vana > Küresel vana, Çek valf) çıkıyor'],
+      ['c2', 'Bir alt gruba dokununca yalnız o alt grubun ürünleri listelendi'],
+      ['c3', 'Ürünlerin alt grubu çoğunlukla doğru (yanlış örnekleri nota yazın: ürün adı → olması gereken)'],
+      ['c4', 'Ürün sayfasının üstündeki "Vana › Küresel vana" yoluna dokununca o gruba gitti'],
+      ['c5', 'Ürün sayfasında kategori kutusundan alt grup seçtim; benzer ürünler de kendiliğinden oraya geçti'],
+      ['c6', 'Ayarlar > Kategori ağacı: bir adı değiştirdim ve yeni alt grup ekledim; ürünler yeni gruba geçti'],
+      ['c7', 'Elle atadığım eski kategoriler yerinde kaldı']]],
     ['OCR: taranmış katalog', [
       ['o1', 'Taranmış (yazısı seçilemeyen) bir katalog yükledim; durum şeridinde "OCR ile okunuyor" yazdı ve okuma bitti (süreyi nota yazın)'],
       ['o2', 'Okuma raporunda "OCR ile okunan sayfa" sayısı yazıyor; "OCR çalışmadı" yazmıyor'],
@@ -2105,6 +2361,17 @@
       '<label>Garanti metni <input data-set="warranty" value="' + esc(s.warranty || '') + '"></label>' +
       '<label>Teklif notu <input data-set="note" value="' + esc(s.note) + '"></label>' +
       '<label class="chk"><input type="checkbox" data-setb="bankOnOffer"' + (s.bankOnOffer ? ' checked' : '') + '> Banka bilgilerini müşteri çıktısına ekle</label>';
+    var cnt = {}; Object.values(db.items).forEach(function (it) { [it.category, it.cat2].forEach(function (c) { if (c) { cnt[c] = (cnt[c] || 0) + 1; var m = mainOf(c); if (m !== c) cnt[m] = (cnt[m] || 0) + 1; } }); });
+    var cats = '<div class="muted">Ana grup ve alt grup adlarını değiştirebilir, alt grup ekleyebilirsiniz. Yeni alt grubun adındaki sözcükler ürün adlarında aranır; uyan ürünler kendiliğinden oraya geçer. Elle atadığınız kategorilere dokunulmaz.</div>' +
+      tree().map(function (m) {
+        return '<details class="cattree"><summary>' + esc(m.name) + ' <small>' + (cnt[m.id] || 0) + ' ürün · ' + m.subs.length + ' alt grup</small></summary>' +
+          '<label>Ana grup adı <input data-catname="' + m.id + '" value="' + esc(m.name) + '"></label>' +
+          m.subs.map(function (x) {
+            return '<div class="row catrow"><input data-catname="' + x.id + '" value="' + esc(x.name) + '" aria-label="Alt grup adı"><small>' + (cnt[x.id] || 0) + '</small>' +
+              (x.user ? '<button class="ghost" data-act="delsub" data-id="' + x.id + '">Sil</button>' : '') + '</div>';
+          }).join('') +
+          '<div class="row catrow"><input id="addsub_' + m.id + '" placeholder="Yeni alt grup adı (örn. Kingston vana)"><button class="soft" data-act="addsub" data-id="' + m.id + '">Ekle</button></div></details>';
+      }).join('');
     var backup = '<div class="muted">Veriler bu cihazda saklanır. Düzenli yedek alın. Yedek, ürün resimlerini ve saklanan belgeleri de içerir.</div>' +
       '<div class="row"><button data-act="export">Yedek indir</button>' +
       '<label class="chk">Yedekten yükle <input type="file" id="importFile" accept=".json,application/json"></label></div>' +
@@ -2121,6 +2388,7 @@
       sect('fb', 'Deneyim ve öneri', 'Puan ve notlar', fb) +
       sect('vt', 'Sürüm testi', '<span class="pill">' + c.done + ' / ' + c.tot + '</span>', test) +
       sect('nt', 'Bildirimler', '', notify) +
+      sect('kt', 'Kategori ağacı', tree().length + ' ana grup', cats) +
       sect('fr', 'Firma bilgileri', esc(s.company || 'müşteri çıktısı'), firm) +
       sect('bk', 'Yedek ve veri', '', backup) +
       sect('ab', 'Uygulama bilgileri', APP_VERSION, about);
@@ -2297,8 +2565,16 @@
     switch (el.dataset.act) {
       case 'back': st.item = null; st.edit = null; st.pick = false; render(); break;
       case 'filter': st.filter = id; render(); break;
-      case 'dim': st.dim = id; st.grp = null; render(true); break;
-      case 'grp': st.grp = st.grp === id ? null : id; drawResults(); break;
+      case 'dim': st.dim = id; st.grp = null; st.sub = null; render(true); break;
+      case 'grp': st.grp = st.grp === id ? null : id; st.sub = null; drawResults(); break;
+      case 'addsub': {
+        var inp = $('#addsub_' + id), nm = inp ? inp.value.trim() : '';
+        if (!nm) { toast('Alt grup adını yazın.'); break; }
+        addSubCat(id, nm); var mv = reCat(); save(); toast('Alt grup eklendi' + (mv ? '; ' + mv + ' ürünün kategorisi güncellendi' : '')); render(true); break;
+      }
+      case 'delsub': if (!confirm('Bu alt grup silinsin mi? İçindeki ürünler ana gruba geçer.')) break; delSubCat(id); reCat(); save(); toast('Alt grup silindi'); render(true); break;
+      case 'sub': st.sub = st.sub === id ? null : id; drawResults(); break;
+      case 'gocat': st.item = null; st.tab = 'ara'; st.q = ''; st.filter = 'hepsi'; st.dim = 'kat'; st.grp = mainOf(id); st.sub = id === mainOf(id) ? null : id; render(); window.scrollTo(0, 0); break;
       case 'gobrand': st.item = null; st.tab = 'ara'; st.q = ''; st.filter = 'hepsi'; st.dim = 'marka'; st.grp = id; render(); break;
       case 'upfor': if (id === 'marka') { st.catBrand = st.grp; st.catSupplier = ''; } else { st.catSupplier = st.grp; st.catBrand = ''; st.catKind = 'fiyat'; } go('katalog'); break;
       case 'openitem': openItem(id); break;
@@ -2411,6 +2687,7 @@
     else if (d.np) { if (st.newProd) st.newProd[d.np] = t.value; }
     else if (d.gb) { if (st.grab) st.grab[d.gb] = t.value; }
     else if (d.gsel != null) { if (st.grab) { st.grab.off[d.gsel] = !t.checked; var gs = $('#grabsave'); if (gs) gs.textContent = 'Seçilenleri ekle (' + grabCount() + ')'; } }
+    else if (d.catname) { renameCat(d.catname, t.value); save(); toast('Ad kaydedildi'); }
     else if (d.cat2) { if (db.items[d.cat2]) { db.items[d.cat2].cat2 = t.value; db.items[d.cat2].catBy = 'user'; save(); toast('İkinci kategori kaydedildi'); } }
     else if (d.prof) {
       var pk = d.prof.split('|'), book = pk[0] === 'marka' ? db.brands : db.sellers, rec = book[d.name] = book[d.name] || {};
@@ -2507,6 +2784,8 @@
     } catch (e) { storeMode = 'ls'; db = normalize(old); saveBad = false; }
     touch();
     var cn = 0;
+    // Kategori ağacı değiştiyse (0.11.0: iki kademe) elle atanmamış ürünler yeniden ayrılır; elle atananlara dokunulmaz
+    if (db.treeVer !== TREE_VER) { cn += reCat() + 1; db.treeVer = TREE_VER; }
     Object.values(db.items).forEach(function (it) { if (it.catBy !== 'user' && (!it.category || it.cat2 == null)) { var c0 = it.category; autoCat(it); if (it.category !== c0 || it.cat2) cn++; } });
     if (db.autoRun !== APP_VERSION) { autoCheck(); db.autoRun = APP_VERSION; cn++; }
     if (cn) save();
@@ -2519,7 +2798,7 @@
     var lastUpd = 0; try { lastUpd = Number(localStorage.getItem('klavuz.upd')) || 0; } catch (e) {}
     if (Date.now() - lastUpd > 12 * 3600 * 1000) setTimeout(function () { checkUpdate(false); }, 4000);
   }
-  if (window.KLAVUZ_TEST) window.KLAVUZ_TEST.api = { readPdf: readPdf, newStat: newStat }; // yalnız otomatik testler
+  if (window.KLAVUZ_TEST) window.KLAVUZ_TEST.api = { readPdf: readPdf, newStat: newStat, classify: function (n, s, c) { var r = classify(n, s, c); return [r, classify.second]; }, catName: catName }; // yalnız otomatik testler
   boot();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(function () {});

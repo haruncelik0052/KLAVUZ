@@ -117,7 +117,7 @@ async function makeCatalog(browser, file, pages) {
   await page.fill('#q', '');
   const idbGet = (key) => page.evaluate((k) => new Promise((res) => { const r = indexedDB.open('klavuz-img'); r.onsuccess = () => { const q = r.result.transaction('data').objectStore('data').get(k); q.onsuccess = () => { r.result.close(); res(Object.values(q.result)); }; }; }), key);
   const cats = (await idbGet('items')).map(i => i.name + '=' + i.category);
-  ok(cats.filter(c => /VANA/.test(c)).every(c => /=vana$/.test(c)) && cats.some(c => c === 'Test filtre=filtre'), 'ürünler kendiliğinden kategorilere ayrıldı');
+  ok(cats.filter(c => /VANA/.test(c)).every(c => /=vana(\.|$)/.test(c)) && cats.some(c => c === 'Test filtre=filtre'), 'ürünler kendiliğinden kategorilere ayrıldı');
   ok(cats.some(c => c === 'Eski sürüm ürünü='), 'ayrılamayan ürün kategorisiz kaldı');
   await page.fill('#q', 'ball valve');
   ok((await page.$$('.pcard')).length >= 6, 'İngilizce tarif Türkçe ürünleri buldu (ball valve -> küresel vana)');
@@ -205,7 +205,7 @@ async function makeCatalog(browser, file, pages) {
   ok(await page.inputValue('[data-np="price"]') === '1249.9', 'sayfadaki fiyat forma geldi');
   await page.click('button[data-act="npsave"]'); await settle(page);
   ok(await page.isVisible('h2:has-text("Marin Sintine Pompası")') && await page.isVisible('button[data-act="openlink"]:has-text("internet sayfasını aç")'), 'ürün kartı bağlantısıyla eklendi');
-  ok((await idbGet('items')).some(i => /Sintine/.test(i.name) && i.category === 'pompa'), 'eklenen ürün kategoriye ayrıldı');
+  ok((await idbGet('items')).some(i => /Sintine/.test(i.name) && /^pompa(\.|$)/.test(i.category)), 'eklenen ürün kategoriye ayrıldı');
   total.items += 1; total.offers += 1;
   await page.evaluate(() => window.KlavuzBack());
   await page.click('nav button[data-tab="sepet"]');
@@ -464,6 +464,50 @@ async function makeCatalog(browser, file, pages) {
     ok(doc && doc.report && doc.report.ocrPages === 1 && !doc.report.ocrErr, 'okuma raporunda 1 OCR sayfası, hata yok');
     const after = await stats(page);
     ok(after.names.some((n) => /KÜRESEL VANA/i.test(n)), 'ürün adı OCR ile okundu');
+  }
+
+  console.log('16. İki kademeli kategori ağacı');
+  {
+    await page.evaluate(() => { window.KlavuzAndroid = window.KlavuzAndroid || {}; window.KlavuzAndroid.fetchImage = () => {}; });
+    // Adında kategori sözcüğü olmayan ürün: sitenin kategori yolu (kırıntı yolu) ipucu olur
+    const prod = '<html><head><script type="application/ld+json">[{"@type":"Product","name":"Rule Mate 1100 GPH 12V","offers":{"price":"2450","priceCurrency":"TRY"}},' +
+      '{"@type":"BreadcrumbList","itemListElement":[{"position":1,"name":"Ana Sayfa"},{"position":2,"name":"Tekne Malzemeleri"},{"position":3,"name":"Pompalar"},{"position":4,"name":"Sintine Pompaları"}]}]<\/script></head><body></body></html>';
+    await page.evaluate((h) => window.KlavuzGrab(h, 'https://www.ornekmarin.com/rule-mate-1100'), prod);
+    await page.click('button[data-act="npsave"]'); await settle(page);
+    let it = (await idbGet('items')).find((i) => i.name === 'Rule Mate 1100 GPH 12V');
+    ok(it && it.category === 'pompa.sintine' && /Sintine/.test(it.crumb || ''), 'sitenin kategori yolundan alt grup bulundu: ' + (it && it.category) + ' · ' + (it && it.crumb));
+    ok(/Pompa\s*›\s*Sintine pompası/.test(await page.textContent('.crumbs')), 'ürün sayfasında kategori yolu görünüyor: ' + (await page.textContent('.crumbs')));
+    await page.click('.crumbs button[data-act="gocat"] >> nth=1');
+    ok(await page.isVisible('#gcard .tile.on:has-text("Sintine pompası")') && (await page.$$('.pcard')).length >= 1 &&
+      (await page.$$eval('.pcard', (els) => els.every((e) => /sintine|rule|pompa/i.test(e.textContent)))), 'kategori yolundan alt gruba gidildi');
+    // Ana grup içinde alt grup kutuları
+    await page.click('button[data-act="dim"][data-id="marka"]'); await page.click('button[data-act="dim"][data-id="kat"]');
+    await page.click('#home .tile[data-act="grp"][data-id="vana"]');
+    const subs = await page.$$eval('#gcard .tile', (els) => els.map((e) => e.textContent));
+    ok(subs.some((t) => /Küresel vana/.test(t)), 'Vana içinde alt grup kutuları: ' + subs.join(' | '));
+    const allV = (await page.$$('.pcard')).length;
+    await page.click('#gcard .tile:has-text("Küresel vana")');
+    const kv = (await page.$$('.pcard')).length;
+    ok(kv >= 1 && kv <= allV && (await page.$$eval('.pcard', (els) => els.every((e) => /küresel|kuresel|ball/i.test(e.textContent)))), 'alt grup süzdü: ' + kv + ' / ' + allV);
+    // Ayarlar: alt grup ekle, ad değiştir, sil
+    await page.click('nav button[data-tab="ayar"]');
+    await page.click('[data-act="toggle"][data-id="kt"]');
+    await page.click('details.cattree:has-text("Vana") summary');
+    await page.fill('#addsub_vana', 'Küresel vana seri');
+    await page.click('button[data-act="addsub"][data-id="vana"]'); await settle(page);
+    let items = await idbGet('items'), r = (await stats(page)).rest;
+    const uid = ((r.catEdit.subs.vana || [])[0] || {}).id;
+    ok(uid && items.filter((i) => /SERİ/.test(i.name) && i.category === uid).length >= 1 && !items.some((i) => /RSS/.test(i.name) && i.category === uid), 'yeni alt grup eklendi, adına uyan ürünler oraya geçti: ' + items.filter((i) => i.category === uid).map((i) => i.name).join(', '));
+    ok(items.filter((i) => i.catBy === 'user').every((i) => i.category !== uid), 'elle atanan kategorilere dokunulmadı');
+    if (!(await page.isVisible('input[data-catname="vana"]'))) await page.click('details.cattree:has-text("Vana") summary');
+    await page.fill('input[data-catname="vana"]', 'Vanalar'); await page.dispatchEvent('input[data-catname="vana"]', 'change'); await settle(page);
+    ok((await stats(page)).rest.catEdit.names.vana === 'Vanalar', 'ana grubun adı değişti');
+    if (!(await page.isVisible('button[data-act="delsub"][data-id="' + uid + '"]'))) await page.click('details.cattree:has-text("Vana") summary');
+    await page.click('button[data-act="delsub"][data-id="' + uid + '"]'); await settle(page);
+    items = await idbGet('items');
+    ok(!items.some((i) => i.category === uid) && !((await stats(page)).rest.catEdit.subs.vana || []).length, 'eklenen alt grup silindi, ürünler geri ayrıldı');
+    await page.click('button[data-tab="ara"]');
+    ok(/Vanalar/.test((await page.textContent('#home')) + (await page.textContent('#groups'))), 'yeni ad arama ekranında görünüyor');
   }
 
   console.log('12. Güncelleme: yeni sürüm bulunur, indirme istenir');
