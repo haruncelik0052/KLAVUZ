@@ -2207,7 +2207,7 @@
     list.forEach(function (r) {
       var m = String((r && r.name) || '').match(/Klavuz (\d+\.\d+\.\d+)/), as = ((r && r.assets) || []).filter(function (a) { return /\.apk$/.test(a.name || ''); })[0];
       if (!m || !as || r.draft) return;
-      if (!best || cmpVer(m[1], best.ver) > 0 || (cmpVer(m[1], best.ver) === 0 && String(r.created_at) > best.at)) best = { ver: m[1], url: as.browser_download_url, size: as.size || 0, at: String(r.created_at) };
+      if (!best || cmpVer(m[1], best.ver) > 0 || (cmpVer(m[1], best.ver) === 0 && String(r.published_at || r.created_at) > best.at)) best = { ver: m[1], url: as.browser_download_url, size: as.size || 0, at: String(r.published_at || r.created_at) };
     });
     try { localStorage.setItem('klavuz.upd', String(Date.now())); } catch (e) {}
     if (best && cmpVer(best.ver, APP_VERSION) > 0) { UPD.info = best; UPD.pct = null; UPD.msg = ''; render(true); }

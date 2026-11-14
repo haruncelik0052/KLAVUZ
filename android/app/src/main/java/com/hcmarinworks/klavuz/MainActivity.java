@@ -43,7 +43,7 @@ public class MainActivity extends AppCompatActivity {
     private int probeSeq;
     private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
     private static final String UPDATE_PREFIX = "https://github.com/haruncelik0052/KLAVUZ/releases/download/";
-    private static final String UPDATE_LIST = "https://api.github.com/repos/haruncelik0052/KLAVUZ/releases?per_page=20";
+    private static final String UPDATE_LIST = "https://api.github.com/repos/haruncelik0052/KLAVUZ/releases?per_page=100";
 
     private void deliverFiles(Uri[] uris) {
         if (filePathCallback != null) {
