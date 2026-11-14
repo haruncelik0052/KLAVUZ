@@ -12,6 +12,17 @@ Kullanıcı açıkça istedi: **devralan oturum önce inceleme yapar, bu sırada
 4. Aşağıdaki istek listesini, kendi bulgularını ve **bizim gözden kaçırdıklarımızı** birleştirip öncelikli bir plan ve öneri listesi hazırla.
 5. Planı kullanıcıya kısa ve sade sun. **Onay gelmeden kod yazma.**
 
+## Temel ilke: her şey internetsiz çalışır
+
+Kullanıcının açık isteği: **uygulamadaki her iş internet olmadan yapılabilmeli.** Plan buna göre kurulur:
+
+- Belge okuma, OCR, kategori ayırma, marka ve satıcı kartları, arama, teklif, yedek: hepsi telefonda, internetsiz çalışır. Gereken her kütüphane ve veri uygulamanın içine konur.
+- İnternet gerektiren işler (Drive'a bağlanma, Drive'a kayıt, markanın sitesinden bilgi ya da resim alma) **isteğe bağlı ek** olur. İnternet yokken uygulama eksiksiz çalışır; bu işler sıraya alınır ve internet gelince yapılır ya da hiç yapılmaz.
+- Hiçbir özellik "internet yoksa çalışmaz" durumda bırakılmaz. İnternetsiz karşılığı olmayan bir istek varsa bu kullanıcıya açıkça söylenir.
+- Kayıt ve yedek için internetsiz yol her zaman vardır: telefona dosya olarak kaydetme. Drive kaydı bunun üstüne eklenir, yerine geçmez.
+
+Kullanıcı yazılımcı değildir; teknik seçimler ona sorulmaz. Aşağıdaki kararları Claude verir.
+
 ## Çalışma kuralları (değişmedi)
 
 - Kullanıcı Harun Çelik (HC MARIN WORKS), yazılımcı değil. Yanıtlar kısa, sade Türkçe, adım adım.
@@ -81,9 +92,11 @@ Telefonda henüz doğrulanmadı: 0.3.0'ın 0.2.0 üstüne kurulması (sabit imza
 6. Yeni düzenler (ters tablo, özellik kartı) ve OCR.
 7. Logo, simgeler, ekran düzeni.
 
-## Kullanıcıya sorulacak iş kararları
+## Verilmiş kararlar (kullanıcıya teknik soru sorulmaz)
 
-- Drive bağlantısı için Google hesabı kurulumu yapılacak mı, yoksa önce Android dosya seçicisi üzerinden mi ilerlenecek?
-- Kategori ağacının ilk hali: Claude önersin, kullanıcı düzeltsin mi?
-- Uygulama simgesi için tercih (renk, biçim).
-- OCR telefonda mı çalışsın (yavaş, internetsiz) yoksa katalog burada okunup hazır "marka paketi" olarak mı yüklensin?
+- **OCR telefonda, internetsiz çalışır.** Yavaş olabilir; arka planda ve parça parça yapılır. Burada okunup hazır "marka paketi" olarak yükleme yalnızca ek bir kolaylıktır.
+- **Belgeler önce telefondan seçilir** (indirilenler, dosya seçici). Drive'a doğrudan bağlanma sonraki, isteğe bağlı adımdır; Google tarafında kurulum gerektirdiği için ancak kullanıcı isterse ve adımları tek tek verilerek yapılır.
+- **Kategori ağacının ilk halini Claude önerir**, uygulamanın içine koyar; kullanıcı uygulamada düzeltir.
+- **Uygulama simgesi için Claude iki üç seçenek hazırlar**, kullanıcı birini seçer. Bu, sorulacak tek görünüm kararıdır.
+
+Kullanıcıya yalnızca şunlar sorulur: planın onayı, simge seçimi, telefonda deneme sonuçları.
