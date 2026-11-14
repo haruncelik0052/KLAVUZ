@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.12.0; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
+- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.12.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -221,3 +221,10 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - **Ürün adı (okuyucu, yalnız OCR'lı sayfada `OCRP`):** tablonun hemen üstündeki yazı genel bir ara yazıysa (`RE_GENERIC`: Standard Pump Configurations, Blister, Color Box, Technical...) ya da ad gibi değilse (`looksName`), aynı sütunda yukarıdaki, önceki ürünün tablosuna kadar olan bölgede en üstteki büyük yazılı (veri satırının ≥ 1,3 katı) satır ad olur. Sayı içeren başlık ("... 01 Series (350 500 GPH)") veri satırı gibi görünse de aday sayılır; böyle bir satır önceki tabloya satır olarak eklenmez.
 - **Ölçülen (Seaflo parça 02, 8 sayfa):** önce 65 satır / 48 kod / adların çoğu "Standard Pump Configurations", "Blister", "Ei mpm"; şimdi 90 satır / 73 kod (SFBP1-G350-01 ...), debi ölçü olarak, volt / akım / basma yüksekliği / çıkış çapı / ağırlık teknik özellik olarak; adlar çoğunlukla doğru ("Dual Port Livewell Pump", "Non-automatic Bilge Pumps 01 Series (1500 2000 GPH)", "Mechanical Auto Bilge Pumps"). Kalan zayıf yerler: sayfa 1–2'deki iç içe düzen, aksesuar tabloları (13F001 gibi kodlar kod sütunu sayılmıyor). Boss, Asel, Elif, GS değişmedi.
 - Testler: `tests/ornek/ocr-urun-blogu.json` (Seaflo sağ yarı sayfa OCR çıktısı).
+
+## Sürüm 0.12.1 (OCR telefonda çalışsın)
+
+- Telefondan gelen Boss okuma raporu (0.11.2): "Motor: ana" ve "OCR çalışmadı: undefined". İkisi aynı nedene işaret ediyor: Android WebView, uygulamanın içindeki `file://` dosyadan iş parçacığı (Worker) başlatmıyor; pdf.js bu yüzden ana iş parçacığında çalışıyor (sessizce), Tesseract ise hiç açılamıyordu (Worker hatası boş geldiği için "undefined").
+- Düzeltme (`ocr.js` `startWith`): `file:` altında Tesseract'ın worker ve motor dosyaları XMLHttpRequest ile okunup `blob:` adresinden başlatılır (motor adresine `#.js` eklenir, tesseract.js adresin ".js" ile bitmesini bekliyor). Olmazsa doğrudan dosyadan denenir; ikisi de olmazsa hata metni iki yolun hatasını yazar. Motor adı "Tesseract SIMD · bellekten / dosyadan".
+- pdf.js için aynı yol denenmedi (çalışmayan worker okumayı kilitleyebilir); şimdilik ana iş parçacığında kalıyor.
+- Telefonda doğrulanmalı: Ayarlar > Uygulama bilgileri > "OCR motorunu dene".

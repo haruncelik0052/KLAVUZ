@@ -40,6 +40,28 @@
   }
   function abs(u) { return new URL(u, location.href).href; }
 
+  // Dosyayı belleğe okuyup blob: adresi ver. Android WebView'de uygulama içindeki (file://) dosyadan iş parçacığı (Worker)
+  // başlatılamıyor (0.11.2 telefonda "OCR çalışmadı: undefined", PDF motoru da "ana"); bellekteki kopyadan başlatılabiliyor.
+  function blobUrl(path) {
+    return loadBin(path).then(function (b) { return URL.createObjectURL(new Blob([b], { type: 'application/javascript' })); });
+  }
+  async function startWith(mode, langs, core) {
+    var wp, cp, made = [];
+    if (mode === 'blob') {
+      wp = await blobUrl('vendor/worker.min.js'); cp = await blobUrl(core); made.push(wp, cp);
+      cp += '#.js'; // motor adresi ".js" ile bitmeli (tesseract.js böyle tanıyor)
+    } else { wp = abs('vendor/worker.min.js'); cp = abs(core); }
+    try {
+      var w = await limit(Tesseract.createWorker([{ code: 'tur', data: langs[0] }, { code: 'eng', data: langs[1] }], 1, {
+        workerPath: wp, corePath: cp, workerBlobURL: false, cacheMethod: 'none', gzip: true,
+        errorHandler: function (e) { info.err = String(e); }
+      }), 180000, 'OCR motoru açılırken');
+      return w;
+    } catch (e) {
+      // Worker açılamayınca hata nesnesi boş gelir ("undefined"); anlaşılır bir metin verilir
+      throw new Error((e && e.message) || (typeof e === 'string' && e) || 'iş parçacığı açılamadı (' + mode + ')');
+    } finally { made.forEach(function (u) { try { URL.revokeObjectURL(u); } catch (x) {} }); }
+  }
   async function start() {
     if (worker) return worker;
     if (starting) return starting;
@@ -49,15 +71,17 @@
       var lang = function (c) { return loadBin('vendor/' + c + '.traineddata.gz').catch(function () { return loadBin('vendor/' + c + '.traineddata'); }); };
       var langs = await Promise.all([lang('tur'), lang('eng')]);
       var core = simd() ? 'vendor/tesseract-core-simd-lstm.wasm.js' : 'vendor/tesseract-core-lstm.wasm.js';
-      var w = await limit(Tesseract.createWorker([{ code: 'tur', data: langs[0] }, { code: 'eng', data: langs[1] }], 1, {
-        workerPath: abs('vendor/worker.min.js'), corePath: abs(core), workerBlobURL: false, cacheMethod: 'none', gzip: true,
-        errorHandler: function (e) { info.err = String(e); }
-      }), 180000, 'OCR motoru açılırken');
-      await w.setParameters({ tessedit_pageseg_mode: (window.KLAVUZ_TEST || {}).ocrPsm || '11', preserve_interword_spaces: '1', user_defined_dpi: String(Math.round(72 * SCALE)) });
-      info.engine = 'Tesseract ' + (/simd/.test(core) ? 'SIMD' : 'temel');
+      var T = window.KLAVUZ_TEST || {};
+      var modes = T.ocrMode ? [T.ocrMode] : (location.protocol === 'file:' ? ['blob', 'dosya'] : ['dosya', 'blob']), w = null, errs = [];
+      for (var i = 0; i < modes.length && !w; i++) {
+        try { w = await startWith(modes[i], langs, core); info.mode = modes[i]; } catch (e) { errs.push(modes[i] + ': ' + e.message); }
+      }
+      if (!w) throw new Error(errs.join(' · '));
+      await w.setParameters({ tessedit_pageseg_mode: T.ocrPsm || '11', preserve_interword_spaces: '1', user_defined_dpi: String(Math.round(72 * SCALE)) });
+      info.engine = 'Tesseract ' + (/simd/.test(core) ? 'SIMD' : 'temel') + ' · ' + (info.mode === 'blob' ? 'bellekten' : 'dosyadan');
       worker = w; return w;
     })();
-    try { return await starting; } catch (e) { info.err = (e && e.message) || String(e); throw e; } finally { starting = null; }
+    try { var r = await starting; info.err = ''; return r; } catch (e) { info.err = (e && e.message) || String(e); throw e; } finally { starting = null; }
   }
   async function stop() {
     var w = worker; worker = null;
