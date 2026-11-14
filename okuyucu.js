@@ -76,6 +76,13 @@
   var RE_PRICE = /fiyat|price|tutar|bedel/;
   var RE_VAT = /kdv ?li|kdv dahil|kdvli|incl/;
   var RE_SIZE = /(^|[^a-z])(dn|size|olcu[a-z]*|ebat|cap|capi|litre|hacim|nps|boyut[a-z]*|anma|nominal)([^a-z]|$)/;
+  var RE_MODEL = /(^|[^a-z])(urun tipi|model|modeli|tip|tipi|type)([^a-z]|$)/;
+  // Firma / adres / tarih yazısı ürün adı değildir (fiyat listelerinin üst bilgisi)
+  var RE_FIRM = /(^|[^a-z])(a\.s|ltd|sti|san\.|tic\.|sanayi ve ticaret|mak\.|muh\.|ins\.|tarih|kdv|telefon|tel ?:|tel\.|fax|faks|adres|hazirlanmistir|bayi ve servisi|fiyatlara|tarihli liste|yerine gecer|gecer|bu liste)([^a-z]|$)|\(?\d{3}\)? ?\d{3} ?\d{2} ?\d{2}/;
+  function isFirm(t) { return RE_FIRM.test(fold(t)); }
+  // Başlıktaki belge sözleri atılır: "MARİN BOYLER FİYAT LİSTESİ" → "MARİN BOYLER"; geriye bir şey kalmazsa başlık değildir
+  var RE_DOCW = /((ö|o)ner[iİı]len\s+|tavs[iİı]ye\s+ed[iİı]len\s+)?(bay[iİı]\s+)?(sat[ıiİ][şs]\s+)?(f[iİı]yat\s+l[iİı]stes[iİı]|pr[iİı]ce\s+l[iİı]st|f[iİı]yat\s+tekl[iİı]f[iİı])\s*|(ö|o)ner[iİı]len\s+bay[iİı]\s+sat[ıiİ][şs]\s*/gi;
+  function titleText(t) { return String(t).replace(RE_DOCW, ' ').replace(/\s+/g, ' ').trim(); }
   var RE_UNIT = /(^|\s)(mm|cm|inch|inc|bar|lt|kg|m)$/;
   // Ürün adı olamayacak genel ara yazılar (katalogda tablonun hemen üstünde durur)
   var RE_GENERIC = /^(standard|technical|teknik|specification|spesifikasyon|ozellik|configuration|included|blister|color box|colour box|ordering|order info|model|accessor|aksesuar|dimension|olcu)|configuration/;
@@ -89,7 +96,9 @@
   function looksMoney(v) { return /^\d{1,3}(\.\d{3})*,\d{2}$/.test(v) || /^\d+,\d{2}$/.test(v); }
   function toNum(s) {
     var t = String(s).replace(/TL|₺|€|EUR|USD|\$/gi, '').trim();
-    if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.'); else t = t.replace(/\./g, '');
+    if (/,\d{1,2}$/.test(t)) t = t.replace(/\./g, '').replace(',', '.');
+    else if (/^\d{1,3}(,\d{3})+(\.\d{1,2})?$/.test(t)) t = t.replace(/,/g, ''); // 86,996 / 1,250.50: virgül binlik ayırıcı
+    else t = t.replace(/\./g, '');
     var n = parseFloat(t); return isNaN(n) ? null : n;
   }
   function isCurSym(v) { return /^(€|\$|₺|tl|try|eur|euro|usd)$/i.test(String(v).trim()); }
@@ -102,13 +111,14 @@
   // ---- Bir sayfa parçasındaki tabloları bul ----
   var RE_LET = /[A-Za-zÇĞİÖŞÜçğıöşü]{3}/;
   function firstDigitX(r) { for (var n = 0; n < r.cells.length; n++) if (hasDigit(r.cells[n].text)) return r.cells[n].x0; return r.x0; }
+  var lastTable = null; // önceki sayfadaki son başlıklı tablo (sayfa başında başlıksız devam eden tablo için)
   function tablesIn(rows, pageNo) {
     var tables = [], used = {};
     var i = 0;
     while (i < rows.length) {
       if (!isDataRow(rows[i])) { i++; continue; }
       // Veri satırlarını topla. Tablonun solunda/sağında kalan açıklama yazıları araya girerse atla.
-      var idx = [i], j = i, coreX = firstDigitX(rows[i]), n0 = i + 1, floats = [];
+      var idx = [i], j = i, coreX = firstDigitX(rows[i]), n0 = i + 1, floats = [], groups = [];
       while (n0 < rows.length) {
         var nr = rows[n0], lastD = rows[idx[idx.length - 1]];
         if (lastD.y - nr.y > 40) break;
@@ -118,6 +128,11 @@
         // Birleşik hücrenin ortasına yazılmış kısa etiket (SERİ, TİP değeri) satırların arasına düşer
         if (nr.cells.length <= 2 && nr.cells.every(function (c) { return c.text.length <= 10; }) && n0 + 1 < rows.length && isDataRow(rows[n0 + 1]) && lastD.y - rows[n0 + 1].y < 40) {
           nr.cells.forEach(function (c) { floats.push({ text: c.text, x0: c.x0, x1: c.x1, y: nr.y }); }); used[n0] = true; n0++; continue;
+        }
+        // Tablonun ortasındaki tek hücreli grup başlığı (örn. "ALK 7\" Serisi"): tablo bölünmez, alttaki satırlara özellik olarak yazılır
+        if (!OCRP && nr.cells.length === 1 && nr.text.length <= 40 && RE_LET.test(nr.text) && !isFirm(nr.text) && n0 + 1 < rows.length && isDataRow(rows[n0 + 1]) &&
+          lastD.y - rows[n0 + 1].y < 45 && nr.x0 > coreX + 3 && nr.x1 < rows[idx[0]].x1) {
+          groups.push({ y: nr.y, text: nr.text }); used[n0] = true; n0++; continue;
         }
         if (nr.x1 < coreX - 3) { n0++; continue; }
         break;
@@ -176,7 +191,7 @@
       // Başlık satırları: tablonun hemen üstünde, sayı içermeyen sütun adları
       var head = [], k = i - 1, lastY = rows[i].y, topHead = -1, seen = 0;
       for (var s = i - 1; s >= 0 && seen < 4; s--) {
-        var cs0 = inRange(rows[s]);
+        var cs0 = inRange(rows[s]).filter(function (c) { return !isFirm(c.text); });
         if (!cs0.length) continue;
         if (rows[s].y - lastY > 60) break;
         seen++;
@@ -201,6 +216,12 @@
         });
       });
       cols.forEach(function (col) { col.label = col.labels.join(' ').replace(/\s+/g, ' ').trim(); col.f = fold(col.label); });
+      // Başlıksız tablo bir önceki sayfanın son tablosunun devamıysa (aynı sütunlar), sütun adları ve ürün adı oradan alınır
+      var carried = null;
+      if (!head.length && lastTable && lastTable.page === pageNo - 1 && lastTable.cols.length === cols.length &&
+        cols.every(function (c, n) { return Math.abs(c.x0 - lastTable.cols[n].x0) < 15 || Math.abs(c.x1 - lastTable.cols[n].x1) < 15; })) {
+        carried = lastTable; cols.forEach(function (col, n) { col.label = lastTable.cols[n].label; col.f = fold(col.label); });
+      }
 
       // Birleşik hücreli sütunlar (SERİ, TİP): değer birkaç satırda yazılıdır, en yakın satırlara yayılır
       cols.forEach(function (col, n) {
@@ -221,7 +242,15 @@
       var role = cols.map(function () { return 'spec'; }), codeC = -1, priceC = -1, vatC = -1, sizeC = -1;
       var codeCols = [], priceCols = [];
       cols.forEach(function (col, n) { if (RE_CODE.test(col.f) && share(n, hasDigit) >= 0.5) codeCols.push(n); });
+      // Kod sütunu yoksa: ÜRÜN TİPİ / MODEL sütunundaki, her satırda farklı, harf ve rakam içeren ad ("4 SD 2/8") koddur
+      if (!codeCols.length) for (var n1b = 0; n1b < cols.length; n1b++) {
+        if (!RE_MODEL.test(cols[n1b].f) || /seri|serie|series|grup|group/.test(cols[n1b].f) || fill(n1b) < 0.9) continue;
+        var mv = grid.map(function (g) { return g[n1b]; }).filter(Boolean), uq = {};
+        mv.forEach(function (v) { uq[v] = 1; });
+        if (Object.keys(uq).length >= mv.length * 0.9 && mv.every(function (v) { return v.length <= 30 && hasDigit(v) && (/[A-Za-z]/.test(v) ? !/^[\d.,\/\s"'x×-]+(mm|cm|inch|bar|lt|kg)$/i.test(v) : /\d{3,}.*[\/-]|[\/-].*\d{3,}/.test(v)); })) { codeCols.push(n1b); break; }
+      }
       if (!codeCols.length) for (var n1 = 0; n1 < cols.length; n1++) {
+        if (/(^|[^a-z])(basinc|debi|mss|bar|kw|hp|guc|gucu|kademe|pressure|flow)([^a-z]|$)/.test(cols[n1].f)) continue; // ölçü sütunu kod değildir (61-35-23 basınç)
         if (share(n1, looksCode) >= 0.8 && fill(n1) >= 0.8 && share(n1, function (v) { return /[A-Za-z]/.test(v) || v.length >= 6; }) >= 0.8) { codeCols.push(n1); break; }
       }
       codeC = codeCols.length ? codeCols[0] : -1;
@@ -236,7 +265,12 @@
       }
       priceC = priceCols.length ? priceCols[0] : -1;
       // Aynı tabloda birden çok kod + fiyat çifti (örn. TAKIM ve GÖVDE): her çift ayrı tekliftir
-      var pairs = [];
+      var pairs = [], priceVars = null;
+      // Tek kodlu satırda birden çok fiyat sütunu (örn. TAKIM / MOTOR / POMPA FİYATI): her fiyat ayrı seçenektir
+      if (codeCols.length <= 1 && priceCols.length >= 2) {
+        var pl = priceCols.map(function (n) { return cols[n].label.replace(/[()\/:]/g, ' ').split(/\s+/).filter(function (w) { return w && !isFirm(w) && !/^\d{1,2}[.\/]\d{1,2}[.\/]\d{2,4}$/.test(w) && !/^(fiyat|fiyati|fiyatlari|price|prices|liste|list|tl|eur|euro|usd|€|\$)$/.test(fold(w)); }).join(' '); });
+        if (pl.every(Boolean) && pl.filter(function (v, i) { return pl.indexOf(v) === i; }).length === pl.length) priceVars = pl;
+      }
       // Fiyatsız tabloda iki kod sütunu (örn. CODE STOP / CODE SDNR): her kod ayrı seçenektir
       if (codeCols.length >= 2 && (priceCols.length >= 2 || (!priceCols.length && vatC < 0))) {
         codeCols.forEach(function (cc, i) {
@@ -269,13 +303,15 @@
 
       // Ürün adı: tablonun üstündeki başlık (bir ya da iki satır). Yakında yoksa sayfanın üst başlığı.
       function isTitle(tt) { return tt.length >= 4 && RE_LET.test(tt) && !/www\.|@|https?:|e-?mail|web:/i.test(tt); }
+      // Başlık yazısı: firma / adres / tarih hücreleri atılır (fiyat listesinin üst bilgisi ürün adı olmasın)
+      function titleOf(r, all) { return (all ? r.cells : inRange(r)).filter(function (c) { return !isFirm(c.text); }).map(function (c) { return titleText(c.text); }).filter(Boolean).join(' '); }
       var name = '', sub = '', topY = (head[0] || rows[i]).y, titleRow = null, looked = 0, far = false;
       for (var t = k; t >= 0 && looked < 3; t--) {
         var tr = rows[t], tt = textIn(tr);
         if (!tt) continue;
         if (tr.y - topY > 75 || isDataRow(tr)) break;
         looked++;
-        if (!isTitle(tt)) continue;
+        if (!isTitle(titleOf(tr))) continue;
         // Başlığın üst satırına taşmış tek kelimelik sütun adı (örn. PRODUCT / CODE) ürün adı değildir
         var ci = inRange(tr);
         if (head.length && ci.length === 1 && tt.length <= 14 && !/\s/.test(tt) && tr.y - topY < tr.h * 2.2) { ci.forEach(function (c) { var n = colOf(c); if (n >= 0) { cols[n].label = (c.text + ' ' + cols[n].label).trim(); cols[n].f = fold(cols[n].label); } }); used[t] = true; continue; }
@@ -284,14 +320,14 @@
       if (titleRow == null) {
         for (var t3 = k; t3 >= 0; t3--) {
           if (isDataRow(rows[t3])) break;
-          if (used[t3] || !isTitle(rows[t3].text) || rows[t3].text.length > 90) continue;
+          if (used[t3] || !isTitle(titleOf(rows[t3], true)) || titleOf(rows[t3], true).length > 90) continue;
           titleRow = t3; far = true; break;
         }
       }
       // Büyük yazılı başlık: tablonun hemen üstünde genel bir ara yazı varsa (örn. "Standard Pump Configurations", "Blister")
       // ya da yakında başlık yoksa, ürünün asıl adı aynı sütunda daha yukarıdaki büyük yazılı başlıktır (açıklama ve resim arada kalır).
       var dh = median(data.map(function (r) { return r.h; }));
-      var nearT = titleRow != null ? (far ? rows[titleRow].text : textIn(rows[titleRow])) : '';
+      var nearT = titleRow != null ? titleOf(rows[titleRow], far) : '';
       if (OCRP && dh > 0 && (titleRow == null || far || RE_GENERIC.test(fold(nearT)) || !looksName(nearT))) {
         var bigT = null, bigH = 0;
         for (var t4 = k; t4 >= 0; t4--) {
@@ -307,7 +343,7 @@
         }
         if (bigT != null) { titleRow = bigT; far = false; }
       }
-      var tText = far ? function (r) { return r.text; } : textIn;
+      var tText = function (r) { return titleOf(r, far); };
       if (titleRow != null) {
         var t1 = rows[titleRow]; name = tText(t1); used[titleRow] = true; if (!far) topY = t1.y;
         for (var u0 = titleRow - 1; u0 >= 0; u0--) {
@@ -341,12 +377,16 @@
         var size = sizeC >= 0 ? g[sizeC] : '';
         if (size) { var um = cols[sizeC].f.match(RE_UNIT); if (um && /^[\d.,\/ ]+$/.test(size)) size += ' ' + um[2]; else if (/^dn$/.test(cols[sizeC].f) && /^\d+$/.test(size)) size = 'DN' + size; }
         if (tip) size = (size + ' ' + tip).trim();
+        var grp = groups.filter(function (gr) { return gr.y > data[n].y; }).pop();
+        if (grp) specs.unshift({ label: '', val: grp.text });
         var specText = specs.map(function (x) { return (x.label ? x.label + ' ' : '') + x.val; }).join(' · ');
         function mk(code, p, variant, pv) {
           return { code: code || '', size: size, variant: variant || '', price: p ? toNum(p) : null, cur: p && curOf(p) !== 'TL' ? curOf(p) : (curC >= 0 && g[curC] ? curOf(g[curC]) : cur),
             priceVat: pv ? toNum(pv) : null, specs: specText, y: data[n].y };
         }
-        if (pairs.length) {
+        if (priceVars) {
+          priceCols.forEach(function (pc, i) { if (g[pc]) out.push(mk(codeC >= 0 ? g[codeC] : '', g[pc], priceVars[i], '')); });
+        } else if (pairs.length) {
           pairs.forEach(function (pr) { if (g[pr.code]) out.push(mk(g[pr.code], pr.price >= 0 ? g[pr.price] : '', pr.variant, '')); });
         } else {
           var p = priceC >= 0 ? g[priceC] : (vatC >= 0 ? g[vatC] : '');
@@ -356,6 +396,9 @@
       out = out.filter(function (r) { return r.code || r.size || r.price != null; });
 
       idx.forEach(function (n) { used[n] = true; });
+      if (carried && !name) { name = carried.name; sub = carried.sub; }
+      if (head.length && out.length >= 2) lastTable = { page: pageNo, cols: cols.map(function (c) { return { x0: c.x0, x1: c.x1, label: c.label }; }), name: name, sub: sub };
+      else if (carried && out.length >= 2) lastTable.page = pageNo;
       if (out.length >= 2) {
         tables.push({
           page: pageNo, name: cleanTitle(name), sub: cleanTitle(sub), rows: out,
@@ -733,6 +776,7 @@
   var OCRP = false; // sayfa OCR ile okundu mu (yazı parçalarında ocr işareti)
   function parsePage(items, images, pageNo) {
     OCRP = items.some(function (i) { return i.ocr; });
+    if (pageNo <= 1 || (lastTable && lastTable.page !== pageNo - 1)) lastTable = null;
     var rows = buildRows(items), parts = [], pre = [];
     // Önce özel düzenler: ters tablo ve birleşik hücreli ızgara. Bulunan bölge sayfadan çıkarılır, kalan olağan yolla okunur.
     var sp = tersTablo(rows, pageNo);
@@ -806,7 +850,16 @@
       tables.forEach(function (t) { loose = loose.filter(function (r) { return r.y > t._top || r.y < t._bot; }); delete t._top; delete t._bot; });
     }
     // Adı bulunamayan tablo: sayfadaki en büyük yazılı başlığı kullan
-    var bigs = loose.filter(function (r) { return r.text.length >= 4 && r.text.length <= 70 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3}/.test(r.text) && !/www\.|@|https?:|e-?mail|web:/i.test(r.text) && !isDataRow(r); })
+    // Aynı sayfada adlı bir tablonun hemen altında, aynı sütunda duran adsız tablo onun devamıdır (fiyat listesinde aynı ürünün sonraki grubu)
+    tables.slice().sort(function (a, b) { return b.box.y1 - a.box.y1; }).forEach(function (t, n, arr) {
+      if (t.name || t.kind) return;
+      for (var q = n - 1; q >= 0; q--) {
+        var a = arr[q]; if (a.kind || Math.min(a.box.x1, t.box.x1) - Math.max(a.box.x0, t.box.x0) < 0.6 * (t.box.x1 - t.box.x0)) continue;
+        if (a.name && !a.guess && a.columns && t.columns && a.columns.length === t.columns.length && a.box.y0 >= t.box.y1 - 20 && a.box.y0 - t.box.y1 < 12) { t.name = a.name; t.sub = a.sub; }
+        break;
+      }
+    });
+    var bigs = loose.map(function (r) { var cs = r.cells.filter(function (c) { return !isFirm(c.text); }); return cs.length ? { text: cs.map(function (c) { return c.text; }).join(' '), h: r.h, y: r.y, cells: cs } : null; }).filter(Boolean).filter(function (r) { return r.text.length >= 4 && r.text.length <= 70 && /[A-Za-zÇĞİÖŞÜçğıöşü]{3}/.test(r.text) && !/www\.|@|https?:|e-?mail|web:/i.test(r.text) && !isDataRow(r); })
       .sort(function (a, b) { return b.h - a.h || b.y - a.y; });
     var guess = '';
     if (bigs.length) {

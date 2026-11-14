@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.12.1';
+  var APP_VERSION = '0.12.2';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -2244,6 +2244,11 @@
     ['Kurulum ve güncelleme', [
       ['g3', 'Bu sürümü dosyadan değil, önceki sürümün içinden kurdum: Ayarlar > Uygulama bilgileri > "Güncellemeyi denetle" > "İndir ve kur"; kurulum ekranı açıldı'],
       ['k1', 'Kurulumdan sonra ürünlerim, resimlerim ve ayarlarım duruyor']]],
+    ['Bayi fiyat listesi (0.12.2)', [
+      ['f1', 'Alarko gibi bir bayi fiyat listesi yükledim (Drive: Alarko klasörü); ürünler "DALGIÇ POMPALAR" gibi doğru adla geldi, firma adı / adres / telefon ürün adı olmadı'],
+      ['f2', 'Ürün kodu olarak "4 SD 2/11" gibi ÜRÜN TİPİ geldi; ürün sayfasında TAKIM, MOTOR, POMPA ayrı seçenek olarak ve kendi fiyatlarıyla görünüyor'],
+      ['f3', 'Sayfa başında başlıksız devam eden tablolarda da fiyat geldi; "86,996" gibi fiyatlar 86.996 TL oldu (86 TL değil)'],
+      ['f4', 'Daha önce okuttuğum kataloglar (Boss, Asel, Elif, GS) eskisi gibi okunuyor']]],
     ['Kategori ağacı', [
       ['c1', 'Ara > Kategori: ana gruplar kutu olarak geliyor; birine dokununca içinde alt gruplar (örn. Vana > Küresel vana, Çek valf) çıkıyor'],
       ['c2', 'Bir alt gruba dokununca yalnız o alt grubun ürünleri listelendi'],

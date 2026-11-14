@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ilk-surum, main, ccr-2f65d271-hbxt5y, ccr-9862a3e5-483rrf, ccr-1df92bb6-t62pv1, claude/klavuz-app-handover-mtewnk]
+    branches: [ilk-surum, main, ccr-2f65d271-hbxt5y, ccr-9862a3e5-483rrf, ccr-1df92bb6-t62pv1, claude/klavuz-app-handover-mtewnk, ccr-89c21dfb-884wcz]
   workflow_dispatch:
 
 permissions:

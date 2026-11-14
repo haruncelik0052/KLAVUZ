@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.12.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
+- Güncel çalışma: `ccr-89c21dfb-884wcz` dalı (sürüm 0.12.2; `claude/klavuz-app-handover-mtewnk` 0.12.1 üzerine kuruldu)
 
 ## Dosyalar
 
@@ -228,3 +228,20 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - Düzeltme (`ocr.js` `startWith`): `file:` altında Tesseract'ın worker ve motor dosyaları XMLHttpRequest ile okunup `blob:` adresinden başlatılır (motor adresine `#.js` eklenir, tesseract.js adresin ".js" ile bitmesini bekliyor). Olmazsa doğrudan dosyadan denenir; ikisi de olmazsa hata metni iki yolun hatasını yazar. Motor adı "Tesseract SIMD · bellekten / dosyadan".
 - pdf.js için aynı yol denenmedi (çalışmayan worker okumayı kilitleyebilir); şimdilik ana iş parçacığında kalıyor.
 - Telefonda doğrulanmalı: Ayarlar > Uygulama bilgileri > "OCR motorunu dene".
+
+## Sürüm 0.12.2 (bayi fiyat listesi: Alarko düzeni)
+
+- Drive `05_MARKA_PROFILLERI` taraması (bu oturum): denenmemiş katalog olarak Alarko fiyat listesi (10 sayfa), Tubend makine kataloğu, LMC kelepçe kataloğu (parça 23-42), Ormanlar Anatolia PVC, Rushwarm RMB fiyat listesi, ARES control valve list indirildi. Ormanlar, RMB zaten doğru okunuyordu. En çok kazandıran Alarko'ydu (422 satır / 169 uyarı → 1011 satır / 3 uyarı; 337 kod × takım / motor / pompa).
+- **Okuyucu (`okuyucu.js`, `tablesIn`):**
+  - Kod sütunu yoksa ÜRÜN TİPİ / MODEL / TİP başlıklı, her satırda farklı, harf + rakam içeren sütun kod olur ("4 SD 2/8", "6017/07"; harfsiz ise 3+ haneli sayı ve / ya da - içermeli). Bu denetim `looksCode` yedeğinden önce yapılır; `looksCode` yedeği BASINÇ / DEBİ / kW / HP gibi ölçü sütunlarını artık kod saymaz ("61-35-23").
+  - Tek kodlu satırda birden çok fiyat sütunu (TAKIM / MOTOR / POMPA FİYATI TL): her dolu fiyat ayrı satır, `variant` = sütun adından "fiyatı, TL, tarih, firma" sözleri atılmış hali. Uygulamada ölçünün yanına "· TAKIM" diye eklenir (ayrı seçenek).
+  - Firma / adres / telefon / tarih hücreleri (`RE_FIRM`, `isFirm`) başlık ve sütun adı sayılmaz; "ÖNERİLEN BAYİ SATIŞ FİYAT LİSTESİ" gibi belge sözleri başlıktan atılır (`RE_DOCW`, `titleText`; "MARİN BOYLER FİYAT LİSTESİ" → "MARİN BOYLER").
+  - Tablonun ortasındaki tek hücreli grup başlığı ("ALK 7\" Serisi") tabloyu bölmez; alttaki satırların özelliklerinin başına yazılır (OCR'lı sayfada uygulanmaz).
+  - Sayfa başında başlıksız tablo, önceki sayfanın son başlıklı tablosuyla aynı sütunlardaysa (`lastTable`) sütun adlarını ve ürün adını oradan alır.
+  - `parsePage`: adsız tablo, aynı sayfada hemen üstündeki (aradaki boşluk < 12 pt + başlık), aynı sütun sayılı adlı tablonun adını alır. Asel sayfa 6'da ad tablonun altında olduğu için boşluk sınırı dar tutuldu.
+  - `toNum`: "86,996" / "1,250.50" (virgül binlik ayırıcı) doğru sayı olur; önceden 86 oluyordu.
+- **Karşılaştırma:** Boss, Asel, Elif, Rushwarm, Asmarine, Eser, Ormanlar, RMB, Tubend, LMC birebir aynı. GS sayfa 29 (yan yana ters tablo + normal tablo, önceden de bozuk) ve Flowmaster sayfa 24 (OCR, 6 satırın adı "FACE TO”" tahmini yerine "FLOWMASTER / DUAL PLATE CHECK VALVES ...") değişti.
+- Testler: `tests/ornek/fiyat-listesi-cok-fiyat.json` (Alarko sayfa 1, 5, 6, 10; firma adı, telefon ve fiyatlar değiştirildi), `tests/okuyucu.test.js` son bölüm.
+- **Okunamayan, sıradaki adaylar:** LMC kelepçe (her grup için birleşik hücreli ölçü bloğu + ürün başına ayrı sipariş kodu sütunu; ikinci ürünün kodu özelliğe düşüyor, ad sütun başlığından geliyor), ARES control valve list (yazılar çizim; OCR tablo çıkarmadı), Tubend (makine kataloğu, ters tablo; fiyatsız), GS sayfa 29.
+- Deneme araçları (depoya girmedi): Playwright ile uygulamanın `readPdf`'i üzerinden katalog okuma ve eski / yeni sürüm çıktısı karşılaştırma (eski sürüm `git archive` ile ayrı klasörde 8081 kapısından sunulur; aynı klasördeki dosya okuma sürerken değişirse karşılaştırma bozulur).
+

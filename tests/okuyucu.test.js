@@ -128,5 +128,26 @@ ok(t.every((x) => /^Non-automatic Bilge Pumps 01 Series/.test(x.name)), 'adlar b
 ok(t[0].rows[0].code === 'SFBP1-G350-01' && t[1].rows[0].code === 'SFBP1-G1500-01', 'model kodları doğru: ' + t[0].rows[0].code + ', ' + t[1].rows[0].code);
 ok(!t[1].rows.some((r) => /Non-automatic/.test(r.code + r.size + r.specs)), 'sonraki ürünün başlığı önceki tabloya satır olarak karışmadı');
 
+console.log('Bayi fiyat listesi (ÜRÜN TİPİ kod, TAKIM / MOTOR / POMPA fiyatları, firma üst bilgisi, sayfadan sayfaya devam)');
+{
+  const pg = load('fiyat-listesi-cok-fiyat.json'), T = pg.map((p) => O.parsePage(p.items, [], p.page).tables);
+  t = T[0];
+  ok(t.length === 6 && t.every((x) => x.name === 'DALGIÇ POMPALAR' && x.sub === "(4'' TRİFAZE POMPALAR)"), 'altı tablonun hepsine ürün adı verildi (firma, adres, telefon ad olmadı): ' + t.map((x) => x.name).join(' / '));
+  const r0 = t[0].rows;
+  ok(r0[0].code === '4 SD 2/8' && r0[0].variant === 'POMPA', 'ÜRÜN TİPİ kod olarak alındı; takım fiyatı boş satırda yalnız pompa seçeneği: ' + r0[0].code + ' ' + r0[0].variant);
+  ok(r0.filter((r) => r.code === '4 SD 2/11').map((r) => r.variant).join(',') === 'TAKIM,MOTOR,POMPA', 'her fiyat sütunu ayrı seçenek (TAKIM, MOTOR, POMPA)');
+  ok(r0.every((r) => r.price > 0) && !/FİYAT|TARİH/.test(r0.map((r) => r.variant).join()), 'seçenek adlarında "FİYATI TL" ve tarih yok');
+  ok(/^KADEME 8 Kad\. · BASINÇ/.test(r0[0].specs), 'teknik değerler özellik: ' + r0[0].specs);
+  t = T[2];
+  ok(t[0].rows[0].code === '6030/08' && t[0].rows[0].variant === 'TAKIM' && t[0].rows[0].price > 1000, 'sayfa başındaki başlıksız tablo önceki sayfanın sütun adlarıyla okundu (fiyat, seçenek): ' + t[0].rows[0].price);
+  ok(t.every((x) => x.name === 'DALGIÇ POMPALAR'), 'devam eden tablonun adı korundu');
+  ok(T[1][0].rows.every((r) => r.price > 1000), 'virgül binlik ayırıcı ("86,996") doğru sayı oldu: ' + T[1][0].rows[0].price);
+  t = T[3];
+  ok(t.length === 1 && t[0].rows.length === 41, 'tablonun ortasındaki seri başlıkları (ALK 7" Serisi) tabloyu bölmedi: ' + t.length + ' tablo');
+  const a7 = t[0].rows.find((r) => r.code === '09.17.001.0100');
+  ok(a7 && a7.price > 0 && /ALK 7" Serisi/.test(a7.specs), 'seri başlığı alttaki satırlara özellik olarak yazıldı, fiyat okundu');
+  ok(!/(000\) 000|Geçer|Bu Liste)/.test(t[0].name + t[0].sub), 'telefon ve "liste yerine geçer" yazısı ad olmadı: ' + t[0].name + ' / ' + t[0].sub);
+}
+
 console.log(fail ? fail + ' test BAŞARISIZ' : 'Tüm testler geçti');
 process.exit(fail ? 1 : 0);

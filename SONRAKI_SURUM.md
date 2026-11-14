@@ -1,6 +1,10 @@
 # Klavuz — sonraki sürüm için devir ve istek listesi
 
-## GÜNCEL DEVİR (0.12.1, 14.11.2026) — önce burayı okuyun
+## GÜNCEL DEVİR (0.12.2, 14.11.2026) — önce burayı okuyun
+
+- **0.12.2 (dal `ccr-89c21dfb-884wcz`):** "4. Drive'daki öbür kataloglar" işine başlandı; Alarko türü bayi fiyat listesi düzeltildi (ayrıntı DEVIR.md sonunda). Sıradaki aday: LMC kelepçe kataloğu (birleşik hücreli ölçü bloğu, ürün başına ayrı kod sütunu). Telefon sonuçları hâlâ bekleniyor (OCR motoru, Seaflo, kategori ağacı, 0.9.0).
+
+## Önceki devir (0.12.1)
 
 - **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.12.1, commit `fc22fbc`; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
 - **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Uygulamadaki her iş internetsiz çalışmalı (internet isteyen her şey ektir).
