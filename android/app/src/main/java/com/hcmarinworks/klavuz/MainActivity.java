@@ -10,6 +10,7 @@ import android.webkit.WebResourceRequest;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.appcompat.app.AppCompatActivity;
@@ -24,35 +25,45 @@ public class MainActivity extends AppCompatActivity {
 
     private WebView web;
     private ValueCallback<Uri[]> filePathCallback;
-    private String pendingSave;
+    private OutputStream saveOut;
+    private boolean saveOk;
+    private final Object saveLock = new Object();
+    private long lastBack;
 
-    // Belge seçici: PDF, Excel, CSV gibi dosyaları seçmek için
-    private final ActivityResultLauncher<String> picker =
-            registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
-                if (filePathCallback != null) {
-                    filePathCallback.onReceiveValue(uri == null ? null : new Uri[]{uri});
-                    filePathCallback = null;
-                }
-            });
+    private void deliverFiles(Uri[] uris) {
+        if (filePathCallback != null) {
+            filePathCallback.onReceiveValue(uris == null || uris.length == 0 ? null : uris);
+            filePathCallback = null;
+        }
+    }
 
-    // Yedek kaydetme: kullanıcı dosyanın yerini seçer
+    // Belge seçici: Android'in belge penceresi. Telefondaki dosyalar ve Google Drive gibi kaynaklar görünür;
+    // birden çok dosya seçilebilir.
+    private final ActivityResultLauncher<String[]> pickMany =
+            registerForActivityResult(new ActivityResultContracts.OpenMultipleDocuments(),
+                    uris -> deliverFiles(uris == null ? null : uris.toArray(new Uri[0])));
+
+    private final ActivityResultLauncher<String[]> pickOne =
+            registerForActivityResult(new ActivityResultContracts.OpenDocument(),
+                    uri -> deliverFiles(uri == null ? null : new Uri[]{uri}));
+
+    // Yedek kaydetme: kullanıcı dosyanın yerini seçer; içerik sonra parça parça yazılır
     private final ActivityResultLauncher<String> saver =
             registerForActivityResult(new ActivityResultContracts.CreateDocument("application/json"), uri -> {
-                boolean ok = false;
-                if (uri != null && pendingSave != null) {
-                    try (OutputStream out = getContentResolver().openOutputStream(uri)) {
-                        if (out != null) {
-                            out.write(pendingSave.getBytes(StandardCharsets.UTF_8));
-                            ok = true;
-                        }
+                if (uri == null) return;
+                boolean opened = false;
+                synchronized (saveLock) {
+                    try {
+                        saveOut = getContentResolver().openOutputStream(uri);
+                        saveOk = saveOut != null;
+                        opened = saveOk;
                     } catch (Exception e) {
-                        ok = false;
+                        saveOut = null;
                     }
                 }
-                pendingSave = null;
-                if (uri != null && web != null) {
-                    web.evaluateJavascript("window.KlavuzSaved && KlavuzSaved(" + ok + ")", null);
-                }
+                if (web == null) return;
+                if (opened) web.evaluateJavascript("window.KlavuzSaveReady && KlavuzSaveReady()", null);
+                else web.evaluateJavascript("window.KlavuzSaved && KlavuzSaved(false)", null);
             });
 
     /** Web sayfasının çağırabildiği Android işlevleri. */
@@ -71,15 +82,50 @@ public class MainActivity extends AppCompatActivity {
             });
         }
 
+        /** Yedek: kayıt yeri penceresini açar. Yer seçilince sayfadaki KlavuzSaveReady çağrılır. */
         @JavascriptInterface
-        public void saveFile(String name, String content) {
+        public void saveBegin(String name) {
             runOnUiThread(() -> {
-                pendingSave = content;
                 try {
                     saver.launch(name);
                 } catch (Exception e) {
-                    pendingSave = null;
+                    if (web != null) web.evaluateJavascript("window.KlavuzSaved && KlavuzSaved(false)", null);
                 }
+            });
+        }
+
+        /** Yedeğin bir parçasını dosyaya yazar. */
+        @JavascriptInterface
+        public void saveChunk(String part) {
+            synchronized (saveLock) {
+                if (saveOut == null || !saveOk) return;
+                try {
+                    saveOut.write(part.getBytes(StandardCharsets.UTF_8));
+                } catch (Exception e) {
+                    saveOk = false;
+                }
+            }
+        }
+
+        /** Yedeği kapatır ve sonucu sayfaya bildirir. */
+        @JavascriptInterface
+        public void saveEnd(boolean complete) {
+            final boolean ok;
+            synchronized (saveLock) {
+                boolean closed = true;
+                if (saveOut != null) {
+                    try {
+                        saveOut.flush();
+                        saveOut.close();
+                    } catch (Exception e) {
+                        closed = false;
+                    }
+                }
+                ok = saveOut != null && saveOk && complete && closed;
+                saveOut = null;
+            }
+            runOnUiThread(() -> {
+                if (web != null) web.evaluateJavascript("window.KlavuzSaved && KlavuzSaved(" + ok + ")", null);
             });
         }
     }
@@ -96,6 +142,9 @@ public class MainActivity extends AppCompatActivity {
         s.setDomStorageEnabled(true);
         s.setDatabaseEnabled(true);
         s.setAllowFileAccess(true);
+        // PDF okuma motorunun arka planda (ayrı iş parçacığında) çalışabilmesi için gerekir.
+        // Sayfa yalnızca uygulamanın kendi dosyalarını yükler.
+        s.setAllowFileAccessFromFileURLs(true);
         s.setLoadWithOverviewMode(true);
         s.setUseWideViewPort(true);
 
@@ -125,7 +174,9 @@ public class MainActivity extends AppCompatActivity {
                 if (filePathCallback != null) filePathCallback.onReceiveValue(null);
                 filePathCallback = callback;
                 try {
-                    picker.launch("*/*");
+                    String[] any = new String[]{"*/*"};
+                    if (params != null && params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE) pickMany.launch(any);
+                    else pickOne.launch(any);
                 } catch (Exception e) {
                     filePathCallback = null;
                     return false;
@@ -134,15 +185,31 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                handleBack();
+            }
+        });
+
         web.loadUrl("file:///android_asset/index.html");
     }
 
-    @Override
-    public void onBackPressed() {
-        if (web != null && web.canGoBack()) {
-            web.goBack();
-        } else {
-            super.onBackPressed();
+    /** Geri tuşu: önce sayfa kendi içinde geri gider; gidecek yer yoksa uygulama kapanmaz, arka plana alınır. */
+    private void handleBack() {
+        if (web == null) {
+            moveTaskToBack(true);
+            return;
         }
+        web.evaluateJavascript("(window.KlavuzBack ? KlavuzBack() : false)", value -> {
+            if ("true".equals(value)) return;
+            long now = System.currentTimeMillis();
+            if (now - lastBack < 2500) {
+                moveTaskToBack(true);
+            } else {
+                lastBack = now;
+                android.widget.Toast.makeText(this, "Çıkmak için bir kez daha basın", android.widget.Toast.LENGTH_SHORT).show();
+            }
+        });
     }
 }

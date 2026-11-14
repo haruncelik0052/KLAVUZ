@@ -1,46 +1,191 @@
+// Uçtan uca test (internetsiz). Çalıştırma: `python3 -m http.server 8080` sonra `node tests/e2e.js`
 const fs = require('fs');
+const path = require('path');
+const os = require('os');
 let pw;
 try { pw = require('playwright'); } catch (e) { pw = require('playwright-core'); }
-// Uygulama internetsiz çalışmalı: dış adreslere giden her istek engellenir.
-const route = (page) => page.context().route(/^https?:\/\/(?!localhost)/, r => r.abort());
+
+const URL0 = 'http://localhost:8080/index.html';
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'klavuz-'));
+let failed = 0;
+function ok(cond, msg) { console.log((cond ? '  ✓ ' : '  ✗ ') + msg); if (!cond) failed++; }
+
+// Kayıtlı veriyi doğrudan veritabanından oku (uygulamanın belleğinden değil)
+const stats = (page) => page.evaluate(() => new Promise((res) => {
+  const r = indexedDB.open('klavuz-img');
+  r.onsuccess = () => {
+    const d = r.result, out = {}, tx = d.transaction(['data', 'img', 'draft']);
+    const get = (store, key, name) => { const q = tx.objectStore(store).get(key); q.onsuccess = () => { out[name] = q.result; }; };
+    get('data', 'items', 'items'); get('data', 'offers', 'offers'); get('data', 'docs', 'docs'); get('data', 'rest', 'rest'); get('data', 'meta', 'meta');
+    const k1 = tx.objectStore('img').getAllKeys(); k1.onsuccess = () => { out.imgKeys = k1.result; };
+    const k2 = tx.objectStore('draft').getAllKeys(); k2.onsuccess = () => { out.draftKeys = k2.result; };
+    tx.oncomplete = () => { d.close(); res({ items: Object.keys(out.items || {}).length, offers: Object.keys(out.offers || {}).length, docs: (out.docs || []).length,
+      rest: out.rest, meta: out.meta, imgKeys: out.imgKeys, draftKeys: out.draftKeys, names: Object.values(out.items || {}).map(i => i.name) }); };
+  };
+}));
+const ready = (page) => page.waitForFunction(() => window.KlavuzHazir === true);
+const settle = (page) => page.waitForTimeout(450); // gecikmeli kaydın yazılması
+
+// Çok sayfalı örnek katalog (tarayıcının kendi PDF çıktısı; gerçek yazı içerir)
+async function makeCatalog(browser, file, pages) {
+  const pg = await browser.newPage();
+  let html = '<style>body{font-family:Arial;font-size:12pt}h2{margin:0 0 12px}table{border-collapse:collapse}td,th{border:1px solid #333;padding:4px 14px}.p{page-break-after:always}</style>';
+  for (let p = 1; p <= pages; p++) {
+    html += '<div class="p"><h2>KÜRESEL VANA SERİ ' + p + '</h2><table><tr><th>KOD</th><th>ÖLÇÜ</th><th>FİYAT</th></tr>';
+    for (let r = 1; r <= 6; r++) html += '<tr><td>KV' + p + '-' + (1000 + r) + '</td><td>' + r + '/2"</td><td>' + (100 * p + r) + ',00 TL</td></tr>';
+    html += '</table></div>';
+  }
+  await pg.setContent(html);
+  await pg.pdf({ path: file, format: 'A4' });
+  await pg.close();
+}
+
 (async () => {
   const browser = await pw.chromium.launch();
-  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 }); const page = await ctx.newPage();
-  const errors = [];
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1, acceptDownloads: true });
+  // Uygulama internetsiz çalışmalı: dış adreslere giden her istek engellenir.
+  await ctx.route(/^https?:\/\/(?!localhost)/, r => r.abort());
+  const page = await ctx.newPage();
+  const errors = [], dialogs = [];
+  let dialogAnswer = true;
   page.on('pageerror', e => errors.push('PAGEERR ' + e.message));
   page.on('console', m => { if (m.type() === 'error') errors.push('CONSOLE ' + m.text()); });
-  await route(page);
-  await page.goto('http://localhost:8080/index.html');
-  await page.waitForTimeout(800);
+  page.on('dialog', d => { dialogs.push(d.message()); dialogAnswer ? d.accept() : d.dismiss(); });
+
+  const multi = path.join(tmp, 'cok-sayfa.pdf');
+  await makeCatalog(browser, multi, 6);
+  const csv = path.join(tmp, 'fiyat.csv');
+  fs.writeFileSync(csv, 'ABC-12345,Test çekvalf,1250\nABC-12346,Test filtre,980\n');
+
+  console.log('1. Eski sürümün verisi kendiliğinden taşınır');
+  await page.goto(URL0);
+  await page.evaluate(() => {
+    localStorage.setItem('klavuz.v1', JSON.stringify({
+      items: { e1: { id: 'e1', name: 'Eski sürüm ürünü', sub: '', brand: 'ESKI', category: '', note: '', verified: true, hasImg: false } },
+      offers: { o1: { id: 'o1', itemId: 'e1', supplier: 'ESKI', code: 'ESK-00001', key: 'ESK00001', size: '1"', listPrice: 100, sellPrice: 120, cur: 'TL', supDisc: 0, status: 'ok', docId: 'd0' } },
+      history: [], docs: [{ id: 'd0', name: 'eski.pdf', supplier: 'ESKI', kind: 'katalog', date: '2026-11-01', count: 1 }], cart: [], cartDiscount: 0, feedback: {}, vtest: {},
+      settings: { company: 'HC MARIN WORKS', phone: '', note: 'x' } }));
+    return new Promise(r => { const q = indexedDB.deleteDatabase('klavuz-img'); q.onsuccess = q.onerror = q.onblocked = () => r(); });
+  });
+  await page.reload(); await ready(page); await settle(page);
+  let s = await stats(page);
+  ok(s.items === 1 && s.offers === 1 && s.docs === 1 && s.meta, 'eski kayıt yeni veritabanına taşındı');
+  ok(s.rest.settings.company === 'HC MARIN WORKS', 'ayarlar taşındı');
+  ok(await page.evaluate(() => !!localStorage.getItem('klavuz.v1')), 'eski kayıt silinmedi (yedek olarak duruyor)');
+  ok(await page.isVisible('text=Eski sürüm ürünü'), 'taşınan ürün aramada görünüyor');
+
+  console.log('2. Çoklu belge, arka planda okuma');
   await page.click('button[data-tab="katalog"]');
   await page.fill('#supName', 'ECA');
-  await page.setInputFiles('#docFile', require('path').join(__dirname, 'katalog.pdf'));
+  await page.setInputFiles('#docFile', [path.join(__dirname, 'katalog.pdf'), csv, multi]);
   await page.click('button[data-act="read"]');
-  await page.waitForSelector('text=Kontrol:', { timeout: 120000 });
-  const msg = await page.textContent('#view .card:nth-of-type(2) .muted');
-  console.log('DRAFT:', msg);
-  await page.click('button[data-act="save"]');
-  await page.waitForTimeout(500);
-  await page.click('button[data-tab="ara"]');
-  await page.waitForTimeout(1200);
-  const cards = await page.$$eval('.pcard', els => els.map(e => ({ name: e.querySelector('b').textContent, img: !!e.querySelector('.thumb img'), price: (e.querySelector('.price')||{}).textContent })));
-  console.log('CARDS:', JSON.stringify(cards));
-  await page.screenshot({ path: require('path').join(__dirname, 'ara.png') });
+  await page.click('nav button[data-tab="ayar"]'); // okuma sürerken başka ekran
+  ok(await page.isVisible('h1:has-text("Ayarlar")'), 'okuma sürerken Ayarlar açıldı');
+  await page.waitForFunction(() => /3 belge okundu/.test(document.querySelector('#strip').textContent), null, { timeout: 120000 });
+  ok(true, 'durum şeridi: 3 belge okundu');
+  await page.click('#strip');
+  ok((await page.$$('.job h3')).length === 3, 'üç belge kontrol kartı olarak bekliyor');
+  s = await stats(page);
+  ok(s.items === 1 && s.draftKeys.length >= 6, 'kaydetmeden önce ürünlere eklenmedi; taslaklar cihazda saklı');
+
+  console.log('3. Taslaklar uygulama kapanıp açılınca kaybolmaz');
+  await page.reload(); await ready(page);
+  await page.click('button[data-tab="katalog"]');
+  ok((await page.$$('.job h3')).length === 3, 'yeniden açınca üç kontrol kartı duruyor');
+  await page.click('.job:has-text("katalog.pdf") button[data-act="jobopen"]');
+  ok((await page.$$('.job img.mini')).length > 0, 'taslaktaki resimler geri geldi');
+  await page.click('button[data-act="saveall"]'); await settle(page);
+  s = await stats(page);
+  ok(s.docs === 4 && s.offers === 1 + 2 + 36 + 3, 'hepsi kaydedildi (' + s.items + ' ürün, ' + s.offers + ' teklif, ' + s.docs + ' belge)');
+  ok(s.draftKeys.length === 0, 'kaydedilen taslaklar temizlendi');
+  const total = { items: s.items, offers: s.offers };
+
+  console.log('4. Kalıcılık ve arama');
+  await page.reload(); await ready(page);
+  const cards = await page.$$eval('.pcard', els => els.map(e => ({ name: e.querySelector('b').textContent, price: (e.querySelector('.price') || {}).textContent })));
+  ok(cards.length === total.items, 'yeniden açınca ürünler duruyor (' + cards.length + ')');
+  await page.waitForSelector('.pcard .thumb img', { timeout: 5000 }).then(() => ok(true, 'ürün resmi duruyor'), () => ok(false, 'ürün resmi duruyor'));
+  await page.fill('#q', 'KV3-1002');
+  ok((await page.$$('.pcard')).length === 1, 'kodla arama tek ürünü buldu');
   await page.click('.pcard >> nth=0');
-  await page.waitForTimeout(1000);
-  const variants = await page.$$eval('.chip', els => els.map(e => e.textContent));
-  console.log('VARIANTS:', JSON.stringify(variants));
-  await page.screenshot({ path: require('path').join(__dirname, 'urun.png') });
-  // Alt bar ürün sayfasında da görünür ve seçili sekme işaretlidir
-  const navOn = await page.$eval('nav.tabs button.on', e => e.dataset.tab);
-  console.log('NAV:', navOn, await page.isVisible('nav.tabs'));
-  // Ayarlar: deneyim puanı ve sürüm testi kaydedilir
+  ok((await page.$$eval('.chip', els => els.length)) >= 6, 'ürün sayfasında ölçüler listelendi');
+  ok(await page.evaluate(() => window.KlavuzBack()) === true && !(await page.$('.chip[data-act="variant"]')), 'geri tuşu ürünü kapattı');
+  ok(await page.evaluate(() => window.KlavuzBack()) === false, 'Ara sekmesinde geri tuşu çıkışa bırakıldı');
+  ok(await page.$eval('nav.tabs button.on', e => e.dataset.tab) === 'ara' && await page.isVisible('nav.tabs'), 'alt bar görünür, Ara seçili');
+
+  console.log('5. Aynı belge ikinci kez seçilince uyarı');
+  await page.click('button[data-tab="katalog"]');
+  await page.fill('#supName', 'ECA');
+  dialogAnswer = false; dialogs.length = 0;
+  await page.setInputFiles('#docFile', multi);
+  await page.click('button[data-act="read"]');
+  await page.waitForTimeout(600);
+  ok(dialogs.length === 1 && /daha önce yüklenmiş/.test(dialogs[0]), 'uyarı çıktı');
+  ok((await page.$$('.job')).length === 0, 'hayır denince sıraya alınmadı');
+  dialogAnswer = true;
+
+  console.log('6. Büyük belge: parça parça okuma, yarıda kalınca devam');
+  const big = path.join(tmp, 'buyuk.pdf');
+  await makeCatalog(browser, big, 9);
+  await page.evaluate(() => { localStorage.setItem('klavuz.test', JSON.stringify({ chunk: 2, delay: 250, big: 1 })); });
+  await page.addInitScript(() => { try { window.KLAVUZ_TEST = JSON.parse(localStorage.getItem('klavuz.test') || 'null'); } catch (e) {} });
+  await page.reload(); await ready(page);
+  await page.click('button[data-tab="katalog"]');
+  await page.fill('#supName', 'BUYUK');
+  await page.setInputFiles('#docFile', big);
+  await page.click('button[data-act="read"]');
+  await page.waitForFunction(() => /Sayfa [5-7] \/ 9/.test(document.querySelector('#strip').textContent), null, { timeout: 60000 });
+  await page.reload(); await ready(page); // okuma yarıdayken uygulama kapandı
+  await page.click('button[data-tab="katalog"]');
+  const partial = await page.textContent('.job');
+  ok(/Yarım kaldı: [46] \/ 9 sayfa/.test(partial), 'yarım kalan okuma saklandı: ' + (partial.match(/Yarım kaldı[^.]*/) || [''])[0]);
+  await page.evaluate(() => { localStorage.setItem('klavuz.test', JSON.stringify({ chunk: 2, big: 1 })); });
+  await page.reload(); await ready(page);
+  await page.click('button[data-tab="katalog"]');
+  await page.fill('#supName', 'BUYUK');
+  await page.setInputFiles('#docFile', big);
+  await page.click('button[data-act="read"]');
+  await page.waitForSelector('.job h3', { timeout: 60000 });
+  const sum = await page.textContent('.job .muted');
+  ok(/9 ürün, 54 satır/.test(sum), 'kaldığı yerden devam etti, eksik ya da çift satır yok: ' + sum.trim());
+  await page.click('.job button[data-act="jobopen"]');
+  ok(/Sayfa<\/span><b>9/.test(await page.innerHTML('.job .report')), 'rapor 9 sayfa gösteriyor');
+  await page.click('.job button[data-act="save"]'); await settle(page);
+  s = await stats(page);
+  ok(s.offers === total.offers + 54, 'büyük belge kaydedildi');
+  await page.evaluate(() => localStorage.removeItem('klavuz.test'));
+
+  console.log('7. Yedek al, sil, yedekten yükle');
+  await page.reload(); await ready(page);
   await page.click('nav button[data-tab="ayar"]');
+  await page.click('[data-act="toggle"][data-id="bk"]');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('button[data-act="export"]')]);
+  const bk = path.join(tmp, 'yedek.json'); await dl.saveAs(bk);
+  const bj = JSON.parse(fs.readFileSync(bk, 'utf8'));
+  ok(Object.keys(bj.items).length === s.items && Object.keys(bj._images).length === s.imgKeys.length && s.imgKeys.length > 0, 'yedek dosyası geçerli; ' + Object.keys(bj._images).length + ' resim kaydı içeriyor');
+  const junk = path.join(tmp, 'baska.json'); fs.writeFileSync(junk, JSON.stringify({ firma_ad: 'x' }));
+  await page.setInputFiles('#importFile', junk); await settle(page);
+  ok((await stats(page)).items === s.items, 'yedek olmayan dosya veriyi silmedi');
+  dialogAnswer = false; dialogs.length = 0;
+  await page.setInputFiles('#importFile', bk); await settle(page);
+  ok(dialogs.length === 1 && /silinir/.test(dialogs[0]) && (await stats(page)).items === s.items, 'yedek yükleme önce onay sordu');
+  dialogAnswer = true;
+  await page.click('button[data-act="wipe"]'); await settle(page);
+  ok((await stats(page)).items === 0 && (await stats(page)).imgKeys.length === 0, 'tüm veriler silindi');
+  await page.click('[data-act="toggle"][data-id="bk"]').catch(() => {});
+  if (!(await page.$('#importFile'))) await page.click('[data-act="toggle"][data-id="bk"]');
+  await page.setInputFiles('#importFile', bk); await settle(page);
+  const after = await stats(page);
+  ok(after.items === s.items && after.offers === s.offers && after.imgKeys.length === s.imgKeys.length, 'yedekten yükleyince ürünler ve resimler geri geldi');
+
+  console.log('8. Sürüm testi işareti kaydedilir');
   await page.click('[data-act="toggle"][data-id="vt"]');
-  await page.click('[data-act="vmark"][data-id="k1:ok"]');
-  const vt = await page.evaluate(() => JSON.parse(localStorage.getItem('klavuz.v1')).vtest.marks.k1);
-  console.log('VTEST:', vt);
-  if (!cards.length || navOn !== 'ara' || vt !== 'ok' || errors.length) { console.log('ERRORS:', JSON.stringify(errors)); throw new Error('uçtan uca test başarısız'); }
-  console.log('ERRORS:', JSON.stringify(errors));
+  await page.click('[data-act="vmark"][data-id="k1:ok"]'); await settle(page);
+  ok((await stats(page)).rest.vtest.marks.k1 === 'ok', 'işaret veritabanına yazıldı');
+
+  ok(errors.length === 0, 'sayfada hata yok ' + JSON.stringify(errors));
   await browser.close();
+  fs.rmSync(tmp, { recursive: true, force: true });
+  if (failed) { console.error('FAIL: ' + failed + ' madde başarısız'); process.exit(1); }
+  console.log('Tüm uçtan uca testler geçti');
 })().catch(e => { console.error('FAIL', e.message); process.exit(1); });

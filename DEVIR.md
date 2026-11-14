@@ -8,12 +8,12 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-2f65d271-hbxt5y` dalı (sürüm 0.2.0)
+- Güncel çalışma: `ccr-9862a3e5-483rrf` dalı (sürüm 0.4.0; `ccr-2f65d271-hbxt5y` üzerine kuruldu)
 
 ## Dosyalar
 
 - `index.html`, `app.js`, `manifest.json`, `icon.svg`, `sw.js`: web uygulaması (düz JavaScript, sunucu yok)
-- Veriler tarayıcıda `localStorage` (anahtar `klavuz.v1`) içinde; ürün resimleri `IndexedDB` (`klavuz-img`) içinde
+- Veriler `IndexedDB` içinde (`klavuz-img` veritabanı, sürüm 2): `data` deposu ürün / teklif / belge / ayar, `img` deposu resimler, `draft` deposu okunmuş ama kaydedilmemiş belgeler. Eski `localStorage` kaydı (`klavuz.v1`) ilk açılışta taşınır ve silinmez
 - `android/`: WebView kabuğu. Yerel Android SDK yok; APK GitHub Actions'ta derlenir (`.github/workflows/build-apk.yml`)
 - `tests/e2e.js`: Playwright ile uçtan uca test. `tests/katalog.pdf` örnek belge
 - `README.md`: kullanım ve bilinen sınırlar
@@ -97,3 +97,17 @@ Dal notu: 0.2.0 çalışması `ccr-2f65d271-hbxt5y` dalında yapıldı (`ilk-sur
 6. Telefondan galeri resmi ekleme; web'den görsel indirme.
 7. Ayarlarda yazı boyutu gibi küçük arayüz ayarları.
 8. `main` dalına birleştirme ve GitHub Pages: sorulmadı, yapılmadı.
+
+## Sürüm 0.4.0 ekleri (sağlam temel)
+
+- **Veri saklama:** `localStorage` yerine IndexedDB. `boot()` eski kaydı bir kez taşır; veritabanı açılamazsa eski yöntemle çalışır. `save()` gecikmeli toplu yazar (`flush()`).
+- **Belge sırası (`jobs`):** çoklu dosya seçimi, sırayla ve arka planda okuma, her sayfada görünen durum şeridi (`#strip`). Okunan belge "Kontrol" kartı olarak bekler; tek tek ya da toplu kaydedilir.
+- **Parça parça okuma:** `readPdf` sayfaları tek tek işler ve bırakır; her 20 sayfada (`CHUNK`) ara kayıt yapar. 8 MB üstü dosyanın tamamı belleğe alınmaz (`openPdf`, `PDFDataRangeTransport`). Uygulama kapanırsa okuma "yarım kaldı" olarak saklanır; aynı dosya (parmak izi: `fingerprint`) yeniden seçilince kaldığı sayfadan devam eder.
+- **Hız:** PDF motoru artık ayrı iş parçacığında çalışabilir (`index.html` içinden `pdf.worker.min.js` etiketi kaldırıldı; çalışamazsa pdf.js kendiliğinden ana iş parçacığına döner). Hazır olmayan resim için 1,5 sn bekleme kaldırıldı. `commit` dizinle eşleştirir. Okuma raporunda süre ve motor yazar.
+- **Yedek:** parça parça yazılır (Android köprüsü `saveBegin / saveChunk / saveEnd`). Yedekten yükleme önce onay sorar; Klavuz yedeği olmayan dosyayı reddeder.
+- **Aynı belge uyarısı:** belge parmak izi `db.docs[].fp` içinde saklanır.
+- **Android:** çoklu belge seçici (`OpenMultipleDocuments`; Drive görünür), geri tuşu (`KlavuzBack`), uygulama kapanmak yerine arka plana alınır.
+- **Testler:** `tests/e2e.js` yeniden yazıldı (taşıma, çoklu okuma, taslak kalıcılığı, yarım kalan okuma, aynı belge, yedek). `window.KLAVUZ_TEST` yalnız testlerde kullanılır.
+- **Simge:** üç seçenek `simge/` klasöründe; kullanıcı seçince `icon.svg` ve Android başlatıcı simgesi yapılacak.
+
+Telefonda doğrulanmadı (0.4.0): WebView'da arka plan iş parçacığı (Ayarlar > Uygulama bilgileri'nde "okuma motoru" yazar), Drive'dan seçilen büyük dosyanın parça parça okunması, parçalı yedek yazma, geri tuşu.

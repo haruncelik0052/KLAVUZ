@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.3.0';
+  var APP_VERSION = '0.4.0';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -41,30 +41,77 @@
       settings: { company: '', phone: '', note: 'Fiyatlar KDV hariçtir.', notify: Object.assign({}, DEFAULT_NOTIFY) } };
   }
   var db;
-  function load() {
-    try {
-      var d = Object.assign(empty(), JSON.parse(localStorage.getItem(KEY)) || {});
-      d.settings = Object.assign(empty().settings, d.settings || {});
-      d.settings.notify = Object.assign({}, DEFAULT_NOTIFY, d.settings.notify || {});
-      return d;
-    } catch (e) { return empty(); }
+  function normalize(d) {
+    d = Object.assign(empty(), d || {});
+    d.settings = Object.assign(empty().settings, d.settings || {});
+    d.settings.notify = Object.assign({}, DEFAULT_NOTIFY, d.settings.notify || {});
+    return d;
   }
-  function save() { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch (e) { toast('Kayıt alanı doldu. Yedek alıp eski belgeleri silin.'); } }
+  function loadLs() { try { return JSON.parse(localStorage.getItem(KEY)) || null; } catch (e) { return null; } }
 
-  // Resimler çok yer kapladığı için ayrı veritabanında (IndexedDB) tutulur.
-  // Anahtarlar: "item:<ürünId>" -> resim, "doc:<belgeId>" -> belgedeki tüm resimler
-  var idb = null, kvCache = {};
-  function openImgDb() {
+  // Veriler cihazdaki geniş veritabanında (IndexedDB) tutulur; eski sürümün dar kayıt alanından (localStorage)
+  // ilk açılışta kendiliğinden taşınır. Eski kayıt silinmez, yedek olarak yerinde kalır.
+  // Depolar: "data" -> ürünler, teklifler, belgeler, ayarlar; "img" -> resimler ve sayfa görüntüleri;
+  // "draft" -> okunmuş ama henüz kaydedilmemiş belgeler (parça parça).
+  var idb = null, kvCache = {}, storeMode = 'ls', saveTimer = null, saveBad = false;
+  var PARTS = ['items', 'offers', 'history', 'docs'];
+  function openDb() {
     return new Promise(function (res, rej) {
       if (!window.indexedDB) return rej(new Error('no indexeddb'));
-      var r = indexedDB.open('klavuz-img', 1);
-      r.onupgradeneeded = function () { r.result.createObjectStore('img'); };
+      var r = indexedDB.open('klavuz-img', 2);
+      r.onupgradeneeded = function () {
+        var d = r.result;
+        ['img', 'data', 'draft'].forEach(function (n) { if (!d.objectStoreNames.contains(n)) d.createObjectStore(n); });
+      };
       r.onsuccess = function () { idb = r.result; res(idb); };
       r.onerror = function () { rej(r.error); };
     });
   }
+  function storeAll(store) {
+    return new Promise(function (res, rej) {
+      var out = {}, rq = idb.transaction(store).objectStore(store).openCursor();
+      rq.onsuccess = function () { var c = rq.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); };
+      rq.onerror = function () { rej(rq.error); };
+    });
+  }
+  function storePut(store, k, v) {
+    return new Promise(function (res) {
+      if (!idb) return res(false);
+      try {
+        var tx = idb.transaction(store, 'readwrite'); tx.objectStore(store).put(v, k);
+        tx.oncomplete = function () { res(true); }; tx.onerror = tx.onabort = function () { res(false); };
+      } catch (e) { res(false); }
+    });
+  }
+  function storeDel(store, k) { if (idb) try { idb.transaction(store, 'readwrite').objectStore(store).delete(k); } catch (e) {} }
+  function saveFail() {
+    saveBad = true; drawStrip();
+    toast('Kayıt yapılamadı. Ayarlar > Yedek ve veri bölümünden yedek alın.');
+  }
+  // Belleği kalıcı kayda yazar. Söz döner: true = yazıldı.
+  function flush() {
+    clearTimeout(saveTimer); saveTimer = null;
+    if (storeMode !== 'idb') {
+      try { localStorage.setItem(KEY, JSON.stringify(db)); saveBad = false; return Promise.resolve(true); }
+      catch (e) { saveFail(); return Promise.resolve(false); }
+    }
+    return new Promise(function (res) {
+      try {
+        var tx = idb.transaction('data', 'readwrite'), s = tx.objectStore('data'), rest = {};
+        Object.keys(db).forEach(function (k) { if (PARTS.indexOf(k) < 0) rest[k] = db[k]; });
+        PARTS.forEach(function (k) { s.put(db[k], k); });
+        s.put(rest, 'rest'); s.put({ ver: APP_VERSION, date: today() }, 'meta');
+        tx.oncomplete = function () { if (saveBad) { saveBad = false; drawStrip(); } res(true); };
+        tx.onerror = tx.onabort = function () { saveFail(); res(false); };
+      } catch (e) { saveFail(); res(false); }
+    });
+  }
+  // Her değişiklikten sonra çağrılır; yazma kısa bir gecikmeyle toplu yapılır.
+  function save() { touch(); if (!saveTimer) saveTimer = setTimeout(flush, 200); }
+
+  // Resimler: anahtarlar "item:<ürünId>" -> resim, "doc:<belgeId>" -> belgedeki tüm resimler, "pages:<belgeId>" -> sayfa görüntüleri
   function kvPut(k, v) {
-    kvCache[k] = v;
+    if (!idb || k in kvCache) kvCache[k] = v;
     if (!idb) return;
     try { idb.transaction('img', 'readwrite').objectStore('img').put(v, k); } catch (e) {}
   }
@@ -79,24 +126,31 @@
       } catch (e) { res(null); }
     });
   }
-  function kvDel(k) {
-    delete kvCache[k];
-    if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').delete(k); } catch (e) {}
-  }
+  function kvDel(k) { delete kvCache[k]; storeDel('img', k); }
   function kvClear() {
     kvCache = {};
     if (idb) try { idb.transaction('img', 'readwrite').objectStore('img').clear(); } catch (e) {}
   }
-  // Yedek için: resim veritabanındaki her şeyi oku
-  function kvAll() {
+  // Yedek için: resim veritabanındaki anahtarlar ve tek tek değerler (hepsi birden belleğe alınmaz)
+  function kvKeys() {
     return new Promise(function (res) {
-      var out = {}; Object.keys(kvCache).forEach(function (k) { if (kvCache[k] != null) out[k] = kvCache[k]; });
-      if (!idb) return res(out);
+      var mem = Object.keys(kvCache).filter(function (k) { return kvCache[k] != null; });
+      if (!idb) return res(mem);
       try {
-        var rq = idb.transaction('img').objectStore('img').openCursor();
-        rq.onsuccess = function () { var c = rq.result; if (c) { out[c.key] = c.value; c.continue(); } else res(out); };
-        rq.onerror = function () { res(out); };
-      } catch (e) { res(out); }
+        var rq = idb.transaction('img').objectStore('img').getAllKeys();
+        rq.onsuccess = function () { res(rq.result.map(String)); };
+        rq.onerror = function () { res(mem); };
+      } catch (e) { res(mem); }
+    });
+  }
+  function kvRead(k) {
+    if (!idb) return Promise.resolve(kvCache[k] == null ? null : kvCache[k]);
+    return new Promise(function (res) {
+      try {
+        var rq = idb.transaction('img').objectStore('img').get(k);
+        rq.onsuccess = function () { res(rq.result === undefined ? null : rq.result); };
+        rq.onerror = function () { res(null); };
+      } catch (e) { res(null); }
     });
   }
   function hydrateImages(root) {
@@ -111,7 +165,13 @@
     });
   }
 
-  function offersOf(itemId) { return Object.values(db.offers).filter(function (o) { return o.itemId === itemId; }); }
+  // Ürünün teklifleri: her seferinde bütün teklifleri taramamak için dizin tutulur; her değişiklikte yenilenir.
+  var offIdx = null;
+  function touch() { offIdx = null; }
+  function offersOf(itemId) {
+    if (!offIdx) { offIdx = {}; Object.values(db.offers).forEach(function (o) { (offIdx[o.itemId] = offIdx[o.itemId] || []).push(o); }); }
+    return (offIdx[itemId] || []).slice();
+  }
   function buyOf(o) { return o.listPrice == null ? null : Math.round(o.listPrice * (1 - (o.supDisc || 0) / 100) * 100) / 100; }
   // Ölçüyü sayıya çevir (sıralama için): 1 1/2" -> 1.5, 3/16" -> 0.1875, 1’1/4 -> 1.25, 10.000 LT -> 10000
   function sizeNum(v) {
@@ -218,124 +278,180 @@
 
   // PDF: her sayfadaki tablolar ürüne çevrilir; resim, yanındaki tablonun bütün satırlarına bağlanır.
   // Sertifika / onay yazıları ürün olarak okunmaz, sayfa görüntüsü olarak saklanır.
-  async function readPdf(file, prog, kind, force) {
+  // Arayüz kilitlenmesin diye uzun işler arasında sıra verilir (arka planda da yavaşlamayan yöntem).
+  var pauseQ = [], pauseCh = typeof MessageChannel !== 'undefined' ? new MessageChannel() : null;
+  if (pauseCh) pauseCh.port1.onmessage = function () { var f = pauseQ.shift(); if (f) f(); };
+  function pause() {
+    return new Promise(function (r) { if (pauseCh) { pauseQ.push(r); pauseCh.port2.postMessage(0); } else setTimeout(r, 0); });
+  }
+  // Belge parmak izi: aynı dosyanın yeniden seçildiğini tanımak için (boyut + baştan ve sondan birer parça)
+  async function fingerprint(file) {
+    var n = 65536, h = 2166136261, i;
+    var a = new Uint8Array(await file.slice(0, n).arrayBuffer());
+    var b = file.size > n ? new Uint8Array(await file.slice(Math.max(n, file.size - n)).arrayBuffer()) : [];
+    for (i = 0; i < a.length; i++) { h ^= a[i]; h = Math.imul(h, 16777619); }
+    for (i = 0; i < b.length; i++) { h ^= b[i]; h = Math.imul(h, 16777619); }
+    return file.size + '-' + (h >>> 0).toString(36);
+  }
+  // PDF'i aç. Büyük dosyanın tamamı belleğe alınmaz; yalnız gereken bölümleri dosyadan parça parça okunur.
+  var BIG_FILE = 8 * 1024 * 1024, pdfEngine = '';
+  async function openPdf(file) {
     if (typeof pdfjsLib === 'undefined' || typeof Okuyucu === 'undefined') throw new Error('PDF okuyucu yüklenemedi.');
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
-    var pdf = await pdfjsLib.getDocument({ data: await file.arrayBuffer() }).promise;
-    var OPS = pdfjsLib.OPS, pages = [], allText = '', firstText = '', n = pdf.numPages, p;
-    for (p = 1; p <= n; p++) {
-      var pg = await pdf.getPage(p), tc = await pg.getTextContent();
-      var items = tc.items.filter(function (i) { return i.str && i.str.trim(); }).map(function (i) {
-        return { str: i.str, x: i.transform[4], y: i.transform[5], w: i.width || 0, h: i.height || Math.abs(i.transform[3]) || 8 };
-      });
-      allText += items.map(function (i) { return i.str; }).join(' ') + '\n';
-      if (p === 1) firstText = allText;
-      pages.push({ page: pg, items: items });
-      if (prog) prog(p, n, 'yazılar');
-    }
-    var textLength = allText.replace(/\s+/g, '').length;
-    var cert = kind === 'sertifika' || (!force && Okuyucu.looksLikeCertificate(firstText, n));
-    if (cert) {
-      var shots = [], max = Math.min(n, 15);
-      for (p = 1; p <= max; p++) {
-        var vp0 = pages[p - 1].page.getViewport({ scale: 1.4 }), c0 = document.createElement('canvas');
-        c0.width = vp0.width; c0.height = vp0.height;
-        await pages[p - 1].page.render({ canvasContext: c0.getContext('2d'), viewport: vp0 }).promise;
-        shots.push(c0.toDataURL('image/jpeg', 0.72));
-        if (prog) prog(p, max, 'sayfa görüntüsü');
+    var task = null;
+    if (file.size > ((window.KLAVUZ_TEST || {}).big || BIG_FILE) && pdfjsLib.PDFDataRangeTransport) {
+      var ranged = false;
+      try { ranged = (await file.slice(file.size - 1024, file.size).arrayBuffer()).byteLength === 1024; } catch (e) { ranged = false; }
+      if (ranged) {
+        var tr = new pdfjsLib.PDFDataRangeTransport(file.size, null);
+        tr.requestDataRange = function (begin, end) {
+          file.slice(begin, end).arrayBuffer().then(function (buf) { tr.onDataRange(begin, new Uint8Array(buf)); });
+        };
+        task = pdfjsLib.getDocument({ range: tr, disableAutoFetch: true, disableStream: true, rangeChunkSize: 1 << 20 });
       }
-      return { cert: true, pages: shots, rows: [], images: [], textLength: textLength, pageCount: n, tableCount: 0 };
     }
-    var rows = [], images = [], tableCount = 0, emptyPages = 0, infoTables = [];
-    for (p = 1; p <= n; p++) {
-      var page = pages[p - 1].page, view = page.view, area = (view[2] - view[0]) * (view[3] - view[1]);
-      var ops = await page.getOperatorList(), boxes = [], ctm = [1, 0, 0, 1, 0, 0], stack = [], seen = {};
-      for (var k = 0; k < ops.fnArray.length; k++) {
-        var fn = ops.fnArray[k], a = ops.argsArray[k];
-        if (fn === OPS.save) stack.push(ctm.slice());
-        else if (fn === OPS.restore) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
-        else if (fn === OPS.transform) ctm = mulM(a, ctm);
-        else if (fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat) {
-          var w = Math.abs(ctm[0]) + Math.abs(ctm[2]), h = Math.abs(ctm[1]) + Math.abs(ctm[3]);
-          var x = Math.min(ctm[4], ctm[4] + ctm[0] + ctm[2]), y = Math.min(ctm[5], ctm[5] + ctm[1] + ctm[3]);
-          var sig = [x, y, w, h].map(Math.round).join(',');
-          if (Math.min(w, h) >= 38 && w * h < 0.5 * area && !seen[sig]) { seen[sig] = true; boxes.push({ id: boxes.length, x: x, y: y, w: w, h: h, name: a && a[0] }); }
-        }
+    if (!task) task = pdfjsLib.getDocument({ data: await file.arrayBuffer() });
+    var pdf = await task.promise;
+    try { pdfEngine = task._worker && task._worker._webWorker ? 'arka plan' : 'ana'; } catch (e) { pdfEngine = ''; }
+    return pdf;
+  }
+  // Belgenin sayfa görüntüleri (sertifika, tanıtım dosyası, tablosu çıkmayan belge)
+  async function pageShots(pdf, prog) {
+    var shots = [], max = Math.min(pdf.numPages, 15);
+    for (var p = 1; p <= max; p++) {
+      var pg = await pdf.getPage(p), vp0 = pg.getViewport({ scale: 1.4 }), c0 = document.createElement('canvas');
+      c0.width = vp0.width; c0.height = vp0.height;
+      await pg.render({ canvasContext: c0.getContext('2d'), viewport: vp0 }).promise;
+      shots.push(c0.toDataURL('image/jpeg', 0.72));
+      c0.width = c0.height = 0; pg.cleanup();
+      if (prog) prog(p, max, 'sayfa görüntüsü');
+      await pause();
+    }
+    return shots;
+  }
+  // PDF: her sayfadaki tablolar ürüne çevrilir; resim, yanındaki tablonun bütün satırlarına bağlanır.
+  // Sertifika / onay yazıları ürün olarak okunmaz, sayfa görüntüsü olarak saklanır.
+  // Sayfalar tek tek işlenir ve bırakılır; her CHUNK sayfada bir o.chunk ile ara kayıt yapılır.
+  // o: { kind, force, start, stat, prog(p, n, ne), chunk(parça, sonrakiSayfa), stop() }
+  var CHUNK = 20;
+  async function readPdf(file, o) {
+    var pdf = await openPdf(file), OPS = pdfjsLib.OPS, n = pdf.numPages, stat = o.stat, p;
+    stat.pageCount = n;
+    try {
+      if (o.kind === 'sertifika') return { cert: true, pages: await pageShots(pdf, o.prog) };
+      var cur = { rows: [], images: [] };
+      var T = window.KLAVUZ_TEST || {}, CH = T.chunk || CHUNK; // KLAVUZ_TEST yalnız otomatik testlerde kullanılır
+      for (p = o.start || 1; p <= n; p++) {
+        if (o.stop && o.stop()) throw new Error('durduruldu');
+        var page = await pdf.getPage(p), tc = await page.getTextContent();
+        var items = tc.items.filter(function (i) { return i.str && i.str.trim(); }).map(function (i) {
+          return { str: i.str, x: i.transform[4], y: i.transform[5], w: i.width || 0, h: i.height || Math.abs(i.transform[3]) || 8 };
+        });
+        var text = items.map(function (i) { return i.str; }).join(' ');
+        if (p === 1 && !o.force && Okuyucu.looksLikeCertificate(text + '\n', n)) return { cert: true, pages: await pageShots(pdf, o.prog) };
+        stat.textLength += text.replace(/\s+/g, '').length;
+        await readPage(page, items, p, OPS, cur, stat);
+        page.cleanup();
+        if (o.prog) o.prog(p, n, '');
+        if (p % CH === 0 || p === n) { await o.chunk(cur, p + 1); cur = { rows: [], images: [] }; }
+        if (T.delay) await new Promise(function (r) { setTimeout(r, T.delay); });
+        await pause();
       }
-      if (pages[p - 1].items.length < 5) emptyPages++;
-      var res = Okuyucu.parsePage(pages[p - 1].items, boxes, p), urls = {}, inks = {}, usedPick = {};
-      if (boxes.length) {
-        // Önce resmin kendisini al (üstüne yazı binmez); alınamazsa sayfa görüntüsünden kırp
-        var cv = null, vp = null;
-        for (var bi = 0; bi < boxes.length; bi++) {
-          var b = boxes[bi], url = null;
-          try { var obj = await imgObject(page, b.name); if (obj) url = thumbUrl(objCanvas(obj)); } catch (e) { url = null; }
-          if (!url) {
-            if (!cv) {
-              vp = page.getViewport({ scale: 2 });
-              cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
-              await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
-            }
-            var r = vp.convertToViewportRectangle([b.x, b.y, b.x + b.w, b.y + b.h]);
-            var sx = Math.max(0, Math.min(r[0], r[2])), sy = Math.max(0, Math.min(r[1], r[3])), sw = Math.abs(r[2] - r[0]), sh = Math.abs(r[3] - r[1]);
-            sw = Math.min(sw, cv.width - sx); sh = Math.min(sh, cv.height - sy);
-            if (sw < 20 || sh < 20) continue;
-            var t = document.createElement('canvas'); t.width = Math.round(sw); t.height = Math.round(sh);
-            t.getContext('2d').drawImage(cv, sx, sy, sw, sh, 0, 0, t.width, t.height);
-            url = thumbUrl(t);
+      return {};
+    } finally { try { pdf.destroy(); } catch (e) {} }
+  }
+  async function readPage(page, items, p, OPS, cur, stat) {
+    var rows = cur.rows, images = cur.images;
+    var view = page.view, area = (view[2] - view[0]) * (view[3] - view[1]);
+    var ops = await page.getOperatorList(), boxes = [], ctm = [1, 0, 0, 1, 0, 0], stack = [], seen = {};
+    for (var k = 0; k < ops.fnArray.length; k++) {
+      var fn = ops.fnArray[k], a = ops.argsArray[k];
+      if (fn === OPS.save) stack.push(ctm.slice());
+      else if (fn === OPS.restore) ctm = stack.pop() || [1, 0, 0, 1, 0, 0];
+      else if (fn === OPS.transform) ctm = mulM(a, ctm);
+      else if (fn === OPS.paintImageXObject || fn === OPS.paintJpegXObject || fn === OPS.paintImageXObjectRepeat) {
+        var w = Math.abs(ctm[0]) + Math.abs(ctm[2]), h = Math.abs(ctm[1]) + Math.abs(ctm[3]);
+        var x = Math.min(ctm[4], ctm[4] + ctm[0] + ctm[2]), y = Math.min(ctm[5], ctm[5] + ctm[1] + ctm[3]);
+        var sig = [x, y, w, h].map(Math.round).join(',');
+        if (Math.min(w, h) >= 38 && w * h < 0.5 * area && !seen[sig]) { seen[sig] = true; boxes.push({ id: boxes.length, x: x, y: y, w: w, h: h, name: a && a[0] }); }
+      }
+    }
+    if (items.length < 5) stat.emptyPages++;
+    var res = Okuyucu.parsePage(items, boxes, p), urls = {}, inks = {}, usedPick = {};
+    if (boxes.length) {
+      // Önce resmin kendisini al (üstüne yazı binmez); alınamazsa sayfa görüntüsünden kırp
+      var cv = null, vp = null;
+      for (var bi = 0; bi < boxes.length; bi++) {
+        var b = boxes[bi], url = null;
+        try { var obj = await imgObject(page, b.name); if (obj) url = thumbUrl(objCanvas(obj)); } catch (e) { url = null; }
+        if (!url) {
+          if (!cv) {
+            vp = page.getViewport({ scale: 2 });
+            cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+            await page.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise;
           }
-          if (url) { urls[b.id] = url; inks[b.id] = thumbUrl.ink || 0; images.push({ page: p, url: url }); }
+          var r = vp.convertToViewportRectangle([b.x, b.y, b.x + b.w, b.y + b.h]);
+          var sx = Math.max(0, Math.min(r[0], r[2])), sy = Math.max(0, Math.min(r[1], r[3])), sw = Math.abs(r[2] - r[0]), sh = Math.abs(r[3] - r[1]);
+          sw = Math.min(sw, cv.width - sx); sh = Math.min(sh, cv.height - sy);
+          if (sw < 20 || sh < 20) continue;
+          var t = document.createElement('canvas'); t.width = Math.round(sw); t.height = Math.round(sh);
+          t.getContext('2d').drawImage(cv, sx, sy, sw, sh, 0, 0, t.width, t.height);
+          url = thumbUrl(t);
         }
+        if (url) { urls[b.id] = url; inks[b.id] = thumbUrl.ink || 0; images.push({ page: p, url: url }); }
       }
-      res.tables.forEach(function (t) {
-        // Kodu da fiyatı da olmayan tablo ürün değil, bilgi tablosudur (malzeme özellikleri, basınç çizelgesi vb.)
-        if (!t.hasCode && !t.hasPrice) { infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
-        tableCount++;
-        // Resim: adaylar içinde fotoğrafı teknik çizime tercih et (çizim çoğunlukla beyazdır)
-        var pick = null;
-        (t.imgs || []).forEach(function (id) { if (urls[id] && (pick == null || inks[id] > inks[pick] * 1.3)) pick = id; });
-        if (pick != null) usedPick[pick] = true;
-        t.rows.forEach(function (r) {
-          var warn = null;
-          if (!t.name) warn = 'ürün adı bulunamadı';
-          else if (t.guess) warn = 'ürün adı tahmin edildi';
-          else if (t.hasCode && !r.code) warn = 'kod okunamadı';
-          else if (t.hasPrice && r.price == null) warn = 'fiyat okunamadı';
-          else if (!r.size && !r.code) warn = 'ölçü okunamadı';
-          rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '',
-            size: (r.size + (r.variant ? ' · ' + r.variant : '')).trim(), price: r.price, cur: r.cur,
-            priceVat: r.priceVat, specs: r.specs, img: pick != null ? urls[pick] : null, page: p, warn: warn });
-        });
-      });
-      // Tablo dışında kalan, kodu ve fiyatı aynı satırda olan ürünler
-      var lineRows = [], usedImg = {};
-      Object.keys(usedPick).forEach(function (id) { usedImg[id] = true; });
-      res.tables.forEach(function (t) { if (t.img != null) usedImg[t.img] = true; });
-      res.loose.forEach(function (l) {
-        var r = parseLine(l.text);
-        if (r && r.code && r.price != null && r.name.length >= 3) { r.page = p; r.sub = ''; r.y = l.y; r.x = l.x; lineRows.push(r); rows.push(r); }
-      });
-      // Tabloya bağlanmamış resimler, en yakın tablo dışı ürün satırına bağlanır
-      boxes.forEach(function (b) {
-        if (usedImg[b.id] || !urls[b.id]) return;
-        var best = null, bd = Infinity, cy = b.y + b.h / 2, cx = b.x + b.w / 2;
-        lineRows.forEach(function (r) {
-          if (r.img) return;
-          var d = Math.abs(r.y - cy) + 0.5 * Math.abs(r.x - cx);
-          if (d < bd) { bd = d; best = r; }
-        });
-        if (best && bd < 220) best.img = urls[b.id];
-      });
-      if (prog) prog(p, n, 'tablolar');
+      if (cv) cv.width = cv.height = 0;
     }
-    return { rows: rows, images: images, textLength: textLength, pageCount: n, tableCount: tableCount, emptyPages: emptyPages, infoTables: infoTables };
+    res.tables.forEach(function (t) {
+      // Kodu da fiyatı da olmayan tablo ürün değil, bilgi tablosudur (malzeme özellikleri, basınç çizelgesi vb.)
+      if (!t.hasCode && !t.hasPrice) { stat.infoTables.push({ page: p, name: t.name || '(adsız)', rows: t.rows.length }); return; }
+      stat.tableCount++;
+      // Resim: adaylar içinde fotoğrafı teknik çizime tercih et (çizim çoğunlukla beyazdır)
+      var pick = null;
+      (t.imgs || []).forEach(function (id) { if (urls[id] && (pick == null || inks[id] > inks[pick] * 1.3)) pick = id; });
+      if (pick != null) usedPick[pick] = true;
+      t.rows.forEach(function (r) {
+        var warn = null;
+        if (!t.name) warn = 'ürün adı bulunamadı';
+        else if (t.guess) warn = 'ürün adı tahmin edildi';
+        else if (t.hasCode && !r.code) warn = 'kod okunamadı';
+        else if (t.hasPrice && r.price == null) warn = 'fiyat okunamadı';
+        else if (!r.size && !r.code) warn = 'ölçü okunamadı';
+        rows.push({ code: r.code, name: t.name || ('Adsız ürün (sayfa ' + p + ')'), sub: t.sub || '',
+          size: (r.size + (r.variant ? ' · ' + r.variant : '')).trim(), price: r.price, cur: r.cur,
+          priceVat: r.priceVat, specs: r.specs, img: pick != null ? urls[pick] : null, page: p, warn: warn });
+      });
+    });
+    // Tablo dışında kalan, kodu ve fiyatı aynı satırda olan ürünler
+    var lineRows = [], usedImg = {};
+    Object.keys(usedPick).forEach(function (id) { usedImg[id] = true; });
+    res.tables.forEach(function (t) { if (t.img != null) usedImg[t.img] = true; });
+    res.loose.forEach(function (l) {
+      var r = parseLine(l.text);
+      if (r && r.code && r.price != null && r.name.length >= 3) { r.page = p; r.sub = ''; r.y = l.y; r.x = l.x; lineRows.push(r); rows.push(r); }
+    });
+    // Tabloya bağlanmamış resimler, en yakın tablo dışı ürün satırına bağlanır
+    boxes.forEach(function (b) {
+      if (usedImg[b.id] || !urls[b.id]) return;
+      var best = null, bd = Infinity, cy = b.y + b.h / 2, cx = b.x + b.w / 2;
+      lineRows.forEach(function (r) {
+        if (r.img) return;
+        var d = Math.abs(r.y - cy) + 0.5 * Math.abs(r.x - cx);
+        if (d < bd) { bd = d; best = r; }
+      });
+      if (best && bd < 220) best.img = urls[b.id];
+    });
   }
   // PDF içindeki resim nesnesini al
   function imgObject(page, name) {
     return new Promise(function (res) {
       if (!name) return res(null);
       var store = String(name).indexOf('g_') === 0 ? page.commonObjs : page.objs, done = false;
-      try { store.get(name, function (o) { done = true; res(o || null); }); } catch (e) { done = true; res(null); }
+      try {
+        // Sayfanın çizim listesi alındıktan sonra resim hazır olmalıdır; hazır değilse beklemeden sayfa görüntüsünden kırpılır.
+        if (typeof store.has === 'function' && !store.has(name)) return res(null);
+        store.get(name, function (o) { done = true; res(o || null); });
+      } catch (e) { done = true; res(null); }
       setTimeout(function () { if (!done) res(null); }, 1500);
     });
   }
@@ -381,9 +497,9 @@
       m[2] * c[0] + m[3] * c[2], m[2] * c[1] + m[3] * c[3],
       m[4] * c[0] + m[5] * c[2] + c[4], m[4] * c[1] + m[5] * c[3] + c[5]];
   }
-  async function readFile(file, prog, kind, force) {
+  // Excel / CSV / TXT
+  async function readSheet(file) {
     var n = file.name.toLowerCase();
-    if (/\.pdf$/.test(n)) return await readPdf(file, prog, kind, force);
     if (/\.(xlsx|xls|csv|ods)$/.test(n)) {
       if (typeof XLSX === 'undefined') throw new Error('Excel okuyucu yüklenemedi.');
       var wb = XLSX.read(await file.arrayBuffer(), { type: 'array' }), out = [];
@@ -392,9 +508,9 @@
           var pr = parseCells(r); if (pr) out.push(pr);
         });
       });
-      return { rows: out, images: [], textLength: 1 };
+      return out;
     }
-    return { rows: parseLines((await file.text()).split(/\r?\n/)), images: [], textLength: 1 };
+    return parseLines((await file.text()).split(/\r?\n/));
   }
   function prepDraft(rows) {
     var seen = {};
@@ -418,14 +534,14 @@
         if (samples.filter(function (s) { return s.why === r.warn; }).length < 4) samples.push({ p: r.page || 0, name: String(r.name).slice(0, 50), code: r.code || '', size: r.size || '', why: r.warn });
       }
     });
-    return { ver: APP_VERSION, file: name, supplier: supplier, kind: kind, date: today(), pages: res.pageCount || 0, emptyPages: res.emptyPages || 0,
+    return { ver: APP_VERSION, secs: res.secs || 0, engine: res.engine || '', file: name, supplier: supplier, kind: kind, date: today(), pages: res.pageCount || 0, emptyPages: res.emptyPages || 0,
       tables: res.tableCount || 0, products: Object.keys(prod).length, withImg: Object.keys(prodImg).length, rows: rows.length,
       noPrice: noPrice, noCode: noCode, info: (res.infoTables || []).slice(0, 12), infoCount: (res.infoTables || []).length, warns: warns, samples: samples };
   }
   function reportText(rp) {
     if (!rp) return 'Bu belge için okuma raporu yok (eski sürümde yüklenmiş).';
     var out = ['Klavuz ' + rp.ver + ' · Okuma raporu · ' + rp.date, 'Belge: ' + rp.file, 'Tedarikçi: ' + rp.supplier + ' · Tür: ' + (KINDS[rp.kind] || rp.kind), '',
-      'Sayfa: ' + rp.pages + (rp.emptyPages ? ' (' + rp.emptyPages + ' sayfada yazı yok)' : ''),
+      'Sayfa: ' + rp.pages + (rp.emptyPages ? ' (' + rp.emptyPages + ' sayfada yazı yok)' : '') + (rp.secs ? ' · Süre: ' + rp.secs + ' sn' : '') + (rp.engine ? ' · Motor: ' + rp.engine : ''),
       'Ürün tablosu: ' + rp.tables + ' · Ürün: ' + rp.products + ' · Satır: ' + rp.rows,
       'Resim bulunan ürün: ' + rp.withImg + ' / ' + rp.products,
       'Fiyatsız satır: ' + rp.noPrice + ' · Kodsuz satır: ' + rp.noCode];
@@ -446,7 +562,7 @@
   function reportHtml(rp) {
     if (!rp) return '<div class="muted">Bu belge için okuma raporu yok (eski sürümde yüklenmiş).</div>';
     var keys = Object.keys(rp.warns).sort(function (a, b) { return rp.warns[b] - rp.warns[a]; });
-    return '<div class="kv"><span>Sayfa</span><b>' + rp.pages + (rp.emptyPages ? ' · ' + rp.emptyPages + ' yazısız' : '') + '</b></div>' +
+    return '<div class="kv"><span>Sayfa</span><b>' + rp.pages + (rp.emptyPages ? ' · ' + rp.emptyPages + ' yazısız' : '') + (rp.secs ? ' · ' + rp.secs + ' sn' : '') + '</b></div>' +
       '<div class="kv"><span>Ürün / satır</span><b>' + rp.products + ' ürün · ' + rp.rows + ' satır</b></div>' +
       '<div class="kv"><span>Resim bulunan ürün</span><b>' + rp.withImg + ' / ' + rp.products + '</b></div>' +
       '<div class="kv"><span>Fiyatsız / kodsuz satır</span><b>' + rp.noPrice + ' / ' + rp.noCode + '</b></div>' +
@@ -456,6 +572,184 @@
           '<div class="muted">' + rp.samples.filter(function (s) { return s.why === k; }).map(function (s) { return 's' + s.p + ' · ' + esc(s.name) + (s.code ? ' · ' + esc(s.code) : ''); }).join('<br>') + '</div></div>';
       }).join('') : '<div class="badge b-ok">Uyarı yok</div>');
   }
+  // ---------- Belge sırası ----------
+  // Seçilen belgeler sıraya girer ve arka planda tek tek okunur; bu sırada diğer ekranlar kullanılabilir.
+  // Her parça (CHUNK sayfa) okunur okunmaz cihaza yazılır: uygulama kapanırsa okunan kısım kaybolmaz,
+  // aynı dosya yeniden seçilince kaldığı sayfadan devam eder.
+  // Durumlar: wait (sırada), run (okunuyor), ready (kontrol bekliyor), partial (yarım kaldı), error
+  var jobs = [], running = false;
+  function newStat() { return { textLength: 0, tableCount: 0, emptyPages: 0, infoTables: [], pageCount: 0, secs: 0, engine: '' }; }
+  function jobMeta(j) {
+    return { id: j.id, docId: j.docId, name: j.name, fp: j.fp, supplier: j.supplier, kind: j.kind, force: !!j.force, status: j.status,
+      next: j.next, chunks: j.chunks, stat: j.stat, cert: !!j.cert, reason: j.reason || '', note: j.note || '', report: j.report || null, err: j.err || '' };
+  }
+  function saveJob(j) { return storePut('draft', 'job:' + j.id, jobMeta(j)); }
+  function dropJob(j) {
+    for (var k = 0; k < j.chunks; k++) storeDel('draft', 'chunk:' + j.id + ':' + k);
+    storeDel('draft', 'job:' + j.id);
+    jobs = jobs.filter(function (x) { return x !== j; });
+    if (st.jobOpen === j.id) st.jobOpen = null;
+  }
+  function resetJob(j) {
+    for (var k = 0; k < j.chunks; k++) storeDel('draft', 'chunk:' + j.id + ':' + k);
+    j.rows = []; j.images = []; j.pages = null; j.chunks = 0; j.next = 1; j.stat = newStat();
+    j.cert = false; j.reason = ''; j.note = ''; j.report = null; j.err = ''; j.prog = '';
+  }
+  // Parçayı belleğe ekle ve cihaza yaz. Aynı resim her satırda yinelenmesin diye satırlar resmin sırasını tutar.
+  async function addChunk(j, c, next) {
+    var at = {}; (c.images || []).forEach(function (im, i) { if (!(im.url in at)) at[im.url] = i; });
+    var packed = (c.rows || []).map(function (r) {
+      if (!r.img || !(r.img in at)) return r;
+      var q = Object.assign({}, r); q.ii = at[r.img]; delete q.img; return q;
+    });
+    (c.rows || []).forEach(function (r) { j.rows.push(r); });
+    (c.images || []).forEach(function (im) { j.images.push(im); });
+    if (c.pages) j.pages = c.pages;
+    await storePut('draft', 'chunk:' + j.id + ':' + j.chunks, { rows: packed, images: c.images || [], pages: c.pages || null });
+    j.chunks++; j.next = next || j.next;
+    await saveJob(j);
+  }
+  // Açılışta: önceki oturumdan kalan okunmuş belgeleri geri getir
+  async function loadJobs() {
+    if (!idb) return;
+    var all; try { all = await storeAll('draft'); } catch (e) { return; }
+    Object.keys(all).forEach(function (k) {
+      if (k.indexOf('job:') !== 0) return;
+      var j = all[k]; j.rows = []; j.images = []; j.pages = null; j.prog = '';
+      for (var i = 0; i < j.chunks; i++) {
+        var c = all['chunk:' + j.id + ':' + i]; if (!c) continue;
+        c.rows.forEach(function (r) { if (r.ii != null && c.images[r.ii]) { r.img = c.images[r.ii].url; } delete r.ii; j.rows.push(r); });
+        c.images.forEach(function (im) { j.images.push(im); });
+        if (c.pages) j.pages = c.pages;
+      }
+      if (j.status === 'error' || (j.status !== 'ready' && !j.chunks)) { jobs.push(j); dropJob(j); return; }
+      if (j.status !== 'ready') j.status = 'partial';
+      jobs.push(j);
+    });
+  }
+  async function enqueue(files, supplier, kind) {
+    for (var i = 0; i < files.length; i++) {
+      var file = files[i], fp = '';
+      try { fp = await fingerprint(file); } catch (e) { fp = file.name + '-' + file.size; }
+      var same = jobs.filter(function (x) { return x.fp === fp; })[0];
+      if (same && same.status === 'partial') { same.file = file; same.status = 'wait'; same.prog = 'Kaldığı yerden devam edecek (sayfa ' + same.next + ')'; continue; }
+      if (same && same.status === 'error') dropJob(same);
+      else if (same) { toast(file.name + ' zaten sırada'); continue; }
+      var dup = db.docs.filter(function (d) { return d.fp ? d.fp === fp : d.name === file.name; })[0];
+      if (dup && !confirm('"' + file.name + '" daha önce yüklenmiş (' + dup.date + ', ' + dup.supplier + ').\nYeniden okunsun mu? Fiyatı değişen ürünler güncellenir.')) continue;
+      jobs.push({ id: uid(), docId: uid(), name: file.name, fp: fp, file: file, supplier: supplier, kind: kind, force: false, status: 'wait',
+        next: 1, chunks: 0, stat: newStat(), rows: [], images: [], pages: null, prog: '' });
+    }
+    drawJobs(); pump();
+  }
+  async function pump() {
+    if (running) return;
+    var j = jobs.filter(function (x) { return x.status === 'wait' && x.file; })[0];
+    if (!j) return;
+    running = true; j.status = 'run'; j.stop = false; drawJobs();
+    try { await runJob(j); }
+    catch (err) {
+      if (j.stop) { dropJob(j); j = null; }
+      else { j.status = 'error'; j.err = (err && err.message) || String(err); await saveJob(j); }
+    }
+    running = false;
+    if (j && j.status === 'ready') toast('Okundu: ' + j.name + '. Belge sekmesinde kontrol edip kaydedin.');
+    drawJobs(); pump();
+  }
+  async function runJob(j) {
+    var t0 = Date.now(), f = j.file, isPdf = /\.pdf$/i.test(j.name), r = {};
+    var prog = function (p, n, what) { j.prog = 'Sayfa ' + p + ' / ' + n + (what ? ' (' + what + ')' : ''); j.pct = Math.round(100 * p / n); drawJobs(true); };
+    await saveJob(j);
+    if (isPdf) {
+      r = await readPdf(f, { kind: j.kind, force: j.force, start: j.next, stat: j.stat, prog: prog,
+        chunk: function (c, next) { return addChunk(j, c, next); }, stop: function () { return j.stop; } });
+      j.stat.engine = pdfEngine;
+    } else {
+      j.prog = 'Okunuyor...'; drawJobs(true);
+      await addChunk(j, { rows: await readSheet(f), images: [] }, 1);
+      j.stat.textLength = 1;
+    }
+    if (!r.cert && !j.rows.length && isPdf) {
+      // Ürün tablosu çıkmayan belge (tanıtım dosyası, taranmış katalog, tabloları resim olan katalog):
+      // kaybolmasın diye sayfa görüntüsü olarak saklanabilir.
+      j.reason = j.stat.textLength < 20 ? 'Belgede yazı yok: sayfalar taranmış resim. Ürünler okunamadı.' :
+        'Ürün tablosu bulunamadı. Bu bir tanıtım dosyası olabilir ya da tabloları resim olarak duruyor olabilir.';
+      j.prog = 'Sayfa görüntüleri hazırlanıyor...'; drawJobs(true);
+      r = await readPdf(f, { kind: 'sertifika', stat: newStat(), prog: prog });
+    }
+    j.stat.secs += Math.round((Date.now() - t0) / 1000);
+    if (r.cert) { j.cert = true; await addChunk(j, { pages: r.pages }, j.next); }
+    else if (!j.rows.length) throw new Error('Belgede ürün satırı bulunamadı.');
+    else {
+      prepDraft(j.rows);
+      j.note = j.stat.emptyPages ? j.stat.emptyPages + ' sayfada yazı yok (taranmış resim); o sayfalar okunamadı.' : '';
+      j.report = buildReport(j.name, j.supplier, j.kind, j.stat, j.rows);
+    }
+    j.status = 'ready'; j.prog = '';
+    await saveJob(j);
+  }
+  function saveJobDraft(j) {
+    var r = commit({ rows: j.rows, images: j.images, pages: j.pages, cert: j.cert, supplier: j.supplier, kind: j.cert ? 'sertifika' : j.kind,
+      name: j.name, docId: j.docId, report: j.report, fp: j.fp });
+    dropJob(j);
+    return r;
+  }
+  function jobsHtml() {
+    var ready = jobs.filter(function (j) { return j.status === 'ready'; });
+    var h = jobs.map(function (j) {
+      var head = '<b>' + esc(j.name) + '</b><div class="muted">' + esc(j.supplier) + ' · ' + (KINDS[j.kind] || j.kind) + '</div>';
+      if (j.status === 'wait') return '<div class="card job"><div class="row"><span>' + head + '<div class="muted">Sırada' + (j.prog ? ' · ' + esc(j.prog) : '') + '</div></span><button class="link danger-text" data-act="jobdel" data-id="' + j.id + '">Çıkar</button></div></div>';
+      if (j.status === 'run') return '<div class="card job"><div class="row"><span>' + head + '<div class="muted">Okunuyor · ' + esc(j.prog || 'başlıyor') + (j.rows.length ? ' · ' + j.rows.length + ' satır' : '') + '</div></span><button class="link danger-text" data-act="jobstop" data-id="' + j.id + '">Durdur</button></div>' +
+        '<div class="bar"><i style="width:' + (j.pct || 0) + '%"></i></div><div class="muted">Bu sırada diğer ekranları kullanabilirsiniz.</div></div>';
+      if (j.status === 'partial') return '<div class="card job"><div class="row"><span>' + head + '<div class="internal">Yarım kaldı: ' + (j.next - 1) + ' / ' + (j.stat.pageCount || '?') + ' sayfa okundu, okunan kısım saklandı. Devam etmek için aynı dosyayı yeniden seçip "Belgeleri oku" düğmesine basın.</div></span><button class="link danger-text" data-act="jobdel" data-id="' + j.id + '">Sil</button></div></div>';
+      if (j.status === 'error') return '<div class="card job"><div class="row"><span>' + head + '<div class="internal">Okunamadı: ' + esc(j.err) + '</div></span><button class="link danger-text" data-act="jobdel" data-id="' + j.id + '">Sil</button></div></div>';
+      var open = st.jobOpen === j.id;
+      if (j.cert) {
+        var pg = j.pages || [];
+        return '<div class="card job"><h3>Kontrol: ' + esc(j.name) + '</h3><div class="muted">' + esc(j.supplier) + '</div>' +
+          '<div class="internal">' + (j.reason ? esc(j.reason) + ' İsterseniz ' : 'Bu belge sertifika / onay yazısı olarak tanındı. Ürün okunmadı; ') + pg.length + ' sayfa belge olarak saklanacak ve Belgeler listesinden açılabilecek.</div>' +
+          (open && pg[0] ? '<img class="certprev" alt="" src="' + pg[0] + '">' : '') +
+          '<div class="row"><button class="primary" data-act="save" data-id="' + j.id + '">Belge olarak kaydet</button>' +
+          '<button class="ghost" data-act="jobopen" data-id="' + j.id + '">' + (open ? 'Gizle' : 'Önizle') + '</button>' +
+          (j.reason || !j.file ? '' : '<button class="ghost" data-act="readforce" data-id="' + j.id + '">Ürün olarak oku</button>') +
+          '<button class="ghost" data-act="jobdel" data-id="' + j.id + '">İptal</button></div></div>';
+      }
+      var rp = j.report || {}, warn = Object.keys(rp.warns || {}).reduce(function (a, k) { return a + rp.warns[k]; }, 0);
+      return '<div class="card job"><h3>Kontrol: ' + esc(j.name) + '</h3>' +
+        '<div class="muted">' + esc(j.supplier) + ' · ' + (rp.products || 0) + ' ürün, ' + j.rows.length + ' satır okundu. ' + (rp.withImg || 0) + ' ürüne resim bulundu, ' + warn + ' satır kontrol gerektiriyor.</div>' +
+        (j.note ? '<div class="internal">' + esc(j.note) + '</div>' : '') +
+        (open ? '<div class="report">' + reportHtml(j.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="' + j.id + '">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="' + j.id + '">Kopyala</button></div></div>' +
+          '<div class="scroll"><table><tr><th></th><th>Ürün</th><th>Kod</th><th>Ölçü</th><th>Fiyat</th><th>Not</th></tr>' +
+          j.rows.slice(0, 300).map(function (r) {
+            return '<tr><td>' + (r.img ? '<img class="mini" alt="" src="' + r.img + '">' : '') + '</td><td>' + esc(r.name) + (r.sub ? '<div class="muted">' + esc(r.sub) + '</div>' : '') + '</td><td>' + esc(r.code || '—') + '</td><td>' + esc(r.size) + '</td><td>' + fmtC(r.price, r.cur) + '</td><td>' + (r.warn ? '<span class="badge b-warn">' + esc(r.warn) + '</span>' : '') + '</td></tr>';
+          }).join('') + '</table></div>' +
+          (j.rows.length > 300 ? '<div class="muted">İlk 300 satır gösteriliyor, hepsi kaydedilecek.</div>' : '') : '') +
+        '<div class="row"><button class="primary" data-act="save" data-id="' + j.id + '">Kaydet</button>' +
+        '<button class="ghost" data-act="jobopen" data-id="' + j.id + '">' + (open ? 'Gizle' : 'Ayrıntı') + '</button>' +
+        '<button class="ghost" data-act="jobdel" data-id="' + j.id + '">İptal</button></div></div>';
+    }).join('');
+    if (ready.length > 1) h += '<div class="row"><button class="primary" data-act="saveall">Hazır ' + ready.length + ' belgenin hepsini kaydet</button></div>';
+    return h;
+  }
+  // Okuma durumu şeridi (her sayfada görünür) ve Belge sekmesindeki sıra; ekranın geri kalanına dokunmaz.
+  function drawStrip() {
+    var el = $('#strip'); if (!el) return;
+    var run = jobs.filter(function (j) { return j.status === 'run'; })[0];
+    var wait = jobs.filter(function (j) { return j.status === 'wait'; }).length, ready = jobs.filter(function (j) { return j.status === 'ready'; }).length;
+    var t = '';
+    if (saveBad) t = 'Kayıt yapılamıyor. Yedek alın.';
+    else if (run) t = 'Okunuyor: ' + run.name + (run.prog ? ' · ' + run.prog : '') + (wait ? ' · sırada ' + wait : '');
+    else if (ready) t = ready + ' belge okundu, kontrol bekliyor';
+    el.textContent = t; el.className = t ? (saveBad ? 'show bad' : 'show') : '';
+  }
+  function drawJobs(light) {
+    drawStrip();
+    var el = $('#jobs'); if (!el) return;
+    // Okuma sürerken yalnız ilerleme satırı değişir; açık ayrıntı tablosu yeniden çizilmez
+    if (light && st.jobOpen) { var b = el.querySelector('.bar i'); if (b) { var r = jobs.filter(function (j) { return j.status === 'run'; })[0]; if (r) b.style.width = (r.pct || 0) + '%'; } return; }
+    el.innerHTML = jobsHtml();
+  }
+
   // Belgeyi veritabanına işle
   // - Aynı tedarikçi + aynı kod: teklifi günceller, fiyat değiştiyse geçmişe yazar
   // - Aynı tedarikçi + aynı ürün adı: aynı ürün kartına yeni varyant (ölçü/kod) olarak ekler
@@ -465,16 +759,27 @@
     var res = { created: 0, updated: 0, changed: 0, pending: 0 };
     if (d.cert) {
       kvPut('pages:' + docId, d.pages);
-      db.docs.push({ id: docId, name: docName, supplier: supplier, kind: 'sertifika', date: today(), count: d.pages.length });
+      db.docs.push({ id: docId, name: docName, supplier: supplier, kind: 'sertifika', date: today(), count: d.pages.length, fp: d.fp || '' });
       save(); res.cert = true; return res;
     }
+    // Hızlı eşleştirme için dizinler (her satırda bütün kayıtları taramamak için)
+    var byKey = {}, byName = {}, noKey = {};
+    Object.values(db.offers).forEach(function (o) {
+      if (o.supplier !== supplier) return;
+      if (o.key) { if (!byKey[o.key]) byKey[o.key] = o; }
+      else { var nk = o.itemId + '|' + fold(o.size); if (!noKey[nk]) noKey[nk] = o; }
+    });
+    Object.values(db.items).forEach(function (it) {
+      if (it.brand !== supplier) return;
+      var k = fold(it.name) + '|' + fold(it.sub); if (!byName[k]) byName[k] = it;
+    });
     rows.forEach(function (r) {
       var key = codeKey(r.code);
-      var off = key ? Object.values(db.offers).find(function (o) { return o.supplier === supplier && o.key === key; }) : null;
+      var off = key ? (byKey[key] || null) : null;
       var nm = fold(r.name), sb = fold(r.sub);
-      var item = off ? db.items[off.itemId] : (nm ? Object.values(db.items).find(function (it) { return fold(it.name) === nm && fold(it.sub) === sb && it.brand === supplier; }) : null);
+      var item = off ? db.items[off.itemId] : (nm ? (byName[nm + '|' + sb] || null) : null);
       // Kodu olmayan fiyat listeleri: aynı ürün + aynı ölçü aynı tekliftir
-      if (!off && !key && item) off = offersOf(item.id).find(function (o) { return o.supplier === supplier && !o.key && fold(o.size) === fold(r.size); }) || null;
+      if (!off && !key && item) off = noKey[item.id + '|' + fold(r.size)] || null;
       if (off) {
         if (r.price != null && (r.price !== off.listPrice || r.cur !== off.cur)) {
           db.history.push({ offerId: off.id, old: off.listPrice, price: r.price, cur: r.cur, date: today(), doc: docName });
@@ -496,16 +801,18 @@
       if (!item) {
         item = { id: uid(), name: r.name || r.code || 'İsimsiz ürün', sub: r.sub || '', brand: supplier, category: '', note: '', verified: false, hasImg: false };
         db.items[item.id] = item;
+        if (nm) byName[nm + '|' + sb] = item;
       }
       if (r.img) attachImg(item, r.img);
       var o = { id: uid(), itemId: item.id, supplier: supplier, code: r.code || '', key: key, size: r.size || '', specs: r.specs || '',
         listPrice: r.price, priceVat: r.priceVat == null ? null : r.priceVat, cur: r.cur || 'TL', supDisc: 0, sellPrice: r.price, lastDir: null,
         status: r.warn ? 'check' : (pendingFlag ? 'pending' : 'ok'), why: r.warn || '', updated: today(), docId: docId };
       db.offers[o.id] = o; res.created++;
+      if (key) byKey[key] = o; else noKey[item.id + '|' + fold(o.size)] = o;
       if (pendingFlag) res.pending++;
     });
     if (d.images && d.images.length) kvPut('doc:' + docId, d.images.map(function (im) { return { page: im.page, url: im.url }; }));
-    db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length, report: d.report || null });
+    db.docs.push({ id: docId, name: docName, supplier: supplier, kind: kind, date: today(), count: rows.length, report: d.report || null, fp: d.fp || '' });
     save();
     return res;
   }
@@ -515,6 +822,7 @@
   }
   function deleteDoc(docId) {
     Object.values(db.offers).forEach(function (o) { if (o.docId === docId) delete db.offers[o.id]; });
+    touch();
     Object.keys(db.items).forEach(function (id) {
       if (!offersOf(id).length) { kvDel('item:' + id); delete db.items[id]; }
     });
@@ -595,8 +903,8 @@
   }
 
   // ---------- Ekranlar ----------
-  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, draft: null, catSupplier: '', catKind: 'katalog',
-    histOffer: null, edit: null, pick: false, pickList: [], docView: null, repDoc: null, readNote: '', lastFile: null, open: {} };
+  var st = { tab: 'ara', q: '', filter: 'hepsi', item: null, variant: null, jobOpen: null, catSupplier: '', catKind: 'katalog',
+    histOffer: null, edit: null, pick: false, pickList: [], docView: null, repDoc: null, open: {} };
   var FILTERS = [['hepsi', 'Tümü'], ['kontrol', 'Kontrol gerekli'], ['dogrulanmamis', 'Doğrulanmamış'], ['resimsiz', 'Resimsiz'], ['bekliyor', 'Bekleyen']];
 
   function viewSearch() {
@@ -720,35 +1028,15 @@
         (st.repDoc === d.id ? '<div class="report">' + reportHtml(d.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="' + d.id + '">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="' + d.id + '">Kopyala</button></div></div>' : '');
     }).join('');
     var h = '<div class="card"><h2>Belge yükle</h2>' +
-      '<div class="muted">PDF, Excel (xlsx/xls), CSV veya TXT dosyası seçin. Okunan ürünleri kaydetmeden önce kontrol edersiniz. İnternet gerekmez.</div>' +
+      '<div class="muted">PDF, Excel (xlsx/xls), CSV veya TXT dosyası seçin; birden çok dosya seçebilirsiniz. Belgeler sırayla, arka planda okunur. Büyük belgeler kendiliğinden parça parça okunur. Okunan ürünleri kaydetmeden önce kontrol edersiniz. İnternet gerekmez.</div>' +
       '<label>Tedarikçi / marka adı <input id="supName" value="' + esc(st.catSupplier) + '"></label>' +
       '<label>Belge türü <select id="kind">' +
       '<option value="katalog"' + (st.catKind === 'katalog' ? ' selected' : '') + '>Ana katalog (resimli, detaylı)</option>' +
       '<option value="fiyat"' + (st.catKind === 'fiyat' ? ' selected' : '') + '>Fiyat listesi (kod ve fiyat)</option>' +
       '<option value="sertifika"' + (st.catKind === 'sertifika' ? ' selected' : '') + '>Belge: sertifika, tanıtım dosyası (ürün okunmaz)</option></select></label>' +
-      '<input type="file" id="docFile" accept=".pdf,.xlsx,.xls,.csv,.txt">' +
-      '<div class="row"><button class="primary" data-act="read">Belgeyi oku</button><span class="muted" id="readMsg">' + esc(st.readNote || '') + '</span></div></div>';
-    if (st.draft && st.draft.cert) {
-      var c = st.draft;
-      h += '<div class="card"><h3>Kontrol: ' + esc(c.name) + '</h3>' +
-        '<div class="internal">' + (c.reason ? esc(c.reason) + ' İsterseniz ' : 'Bu belge sertifika / onay yazısı olarak tanındı. Ürün okunmadı; ') + c.pages.length + ' sayfa belge olarak saklanacak ve Belgeler listesinden açılabilecek.</div>' +
-        (c.pages[0] ? '<img class="certprev" alt="" src="' + c.pages[0] + '">' : '') +
-        '<div class="row"><button class="primary" data-act="save">Belge olarak kaydet</button>' +
-        (c.reason ? '' : '<button class="ghost" data-act="readforce">Ürün olarak oku</button>') + '<button class="ghost" data-act="cancel">İptal</button></div></div>';
-    } else if (st.draft) {
-      var d = st.draft, warn = d.rows.filter(function (r) { return r.warn; }).length, prod = {}, prodImg = {};
-      d.rows.forEach(function (r) { var k = r.name + '|' + (r.sub || ''); prod[k] = true; if (r.img) prodImg[k] = true; });
-      h += '<div class="card"><h3>Kontrol: ' + esc(d.name) + '</h3>' +
-        '<div class="muted">' + Object.keys(prod).length + ' ürün, ' + d.rows.length + ' satır okundu. ' + Object.keys(prodImg).length + ' ürüne resim bulundu, ' + warn + ' satır kontrol gerektiriyor.</div>' +
-        (d.note ? '<div class="internal">' + esc(d.note) + '</div>' : '') +
-        '<div class="report">' + reportHtml(d.report) + '<div class="row"><button class="soft" data-act="repshare" data-id="draft">Okuma raporunu paylaş</button><button class="soft" data-act="repcopy" data-id="draft">Kopyala</button></div></div>' +
-        '<div class="scroll"><table><tr><th></th><th>Ürün</th><th>Kod</th><th>Ölçü</th><th>Fiyat</th><th>Not</th></tr>' +
-        d.rows.slice(0, 300).map(function (r) {
-          return '<tr><td>' + (r.img ? '<img class="mini" alt="" src="' + r.img + '">' : '') + '</td><td>' + esc(r.name) + (r.sub ? '<div class="muted">' + esc(r.sub) + '</div>' : '') + '</td><td>' + esc(r.code || '—') + '</td><td>' + esc(r.size) + '</td><td>' + fmtC(r.price, r.cur) + '</td><td>' + (r.warn ? '<span class="badge b-warn">' + esc(r.warn) + '</span>' : '') + '</td></tr>';
-        }).join('') + '</table></div>' +
-        (d.rows.length > 300 ? '<div class="muted">İlk 300 satır gösteriliyor, hepsi kaydedilecek.</div>' : '') +
-        '<div class="row"><button class="primary" data-act="save">Kaydet</button><button class="ghost" data-act="cancel">İptal</button></div></div>';
-    }
+      '<input type="file" id="docFile" multiple accept=".pdf,.xlsx,.xls,.csv,.txt">' +
+      '<div class="row"><button class="primary" data-act="read">Belgeleri oku</button></div></div>' +
+      '<div id="jobs" class="jobs">' + jobsHtml() + '</div>';
     return h + '<div class="card"><h3>Yüklenen belgeler</h3>' + (docs || '<p class="muted">Henüz belge yok.</p>') + '</div>';
   }
   function viewCart() {
@@ -856,30 +1144,34 @@
   var FB_SECS = [['ara', 'Arama'], ['urun', 'Ürün sayfası'], ['belge', 'Belge okuma'], ['sepet', 'Sepet ve teklif'], ['uyari', 'Uyarılar'], ['genel', 'Genel']];
   // Sürüm testi: markaya değil sistemin kendisine yönelik maddeler. Hangi belgeyle denendiği not kutusuna yazılır.
   var VTEST = [
-    ['Kurulum', [
-      ['k1', 'Yeni sürüm eskisinin üstüne kuruldu; ürünlerim ve ayarlarım duruyor'],
-      ['k2', 'Uygulama uçak modunda açılıyor ve belge okuyor']]],
-    ['Belge okuma', [
-      ['b1', 'Yüklediğim belgede ürün adları doğru geldi'],
-      ['b2', 'Kodlar ve ölçüler doğru geldi'],
-      ['b3', 'Fiyatlar ve para birimi doğru geldi'],
-      ['b4', 'Resimler doğru ürüne bağlandı'],
-      ['b5', 'Sertifika / onay belgesi ürün olarak okunmadı, belge olarak açılıyor'],
-      ['b6', 'Ürün tablosu çıkmayan belgede uygulama nedenini söyledi ve belge olarak saklamayı önerdi']]],
-    ['Okuma raporu', [
-      ['o1', 'Belgeyi okuyunca uyarı nedenleri ve sayıları göründü'],
-      ['o2', 'Okuma raporunu paylaşabildim ya da kopyalayabildim'],
-      ['o3', 'Ürün sayfasında "Kontrol gerekli" uyarısının nedeni yazıyor']]],
-    ['Kalıcılık ve yedek', [
-      ['r1', 'Uygulamayı tamamen kapatıp açınca ürünler ve resimler duruyor'],
-      ['r2', 'Yedek indirildi; yedekten yükleyince resimler de geri geldi'],
-      ['r3', 'Ada firma profili yüklendi, firma bilgileri doldu']]],
+    ['Kurulum ve veri taşıma', [
+      ['k1', 'Yeni sürüm eskisinin üstüne kuruldu; eski ürünlerim, resimlerim ve ayarlarım duruyor'],
+      ['k2', 'Uygulama uçak modunda açılıyor ve belge okuyor'],
+      ['k3', 'Uygulamayı tamamen kapatıp açınca ürünler ve resimler duruyor']]],
+    ['Çoklu belge ve arka planda okuma', [
+      ['c1', 'Dosya seçicide birden çok belge seçebildim'],
+      ['c2', 'Dosya seçicide Google Drive göründü ve oradan belge seçebildim (internet varken)'],
+      ['c3', 'Belgeler sırayla okundu; okuma sürerken Ara, Sepet ve Ayarlar ekranlarını kullanabildim'],
+      ['c4', 'Üstteki durum şeridi okunan sayfayı gösterdi'],
+      ['c5', 'Okunan belgeler "Kontrol" kartı olarak bekledi; tek tek ya da hepsini birden kaydedebildim']]],
+    ['Büyük belge', [
+      ['g1', '10 MB üstü bir katalog çökmeden, kendiliğinden parça parça okundu'],
+      ['g2', 'Okuma sırasında uygulamayı kapattım; açınca "yarım kaldı" kartı çıktı ve aynı dosyayı seçince kaldığı sayfadan devam etti'],
+      ['g3', 'Okuma hızı önceki sürüme göre daha iyi (rapordaki süreyi nota yazın)'],
+      ['g4', 'Aynı belgeyi ikinci kez seçince uygulama uyardı']]],
+    ['Belge okuma doğruluğu', [
+      ['b1', 'Ürün adları, kodlar ve ölçüler önceki sürümdeki kadar doğru geldi'],
+      ['b2', 'Fiyatlar ve para birimi doğru geldi'],
+      ['b3', 'Resimler doğru ürüne bağlandı'],
+      ['b4', 'Sertifika / tanıtım belgesi ürün olarak okunmadı, belge olarak açılıyor']]],
+    ['Yedek', [
+      ['r1', 'Yedek indir: kayıt yeri penceresi açıldı ve dosya kaydedildi'],
+      ['r2', 'Yedekten yükle: önce onay sordu; onaylayınca ürünler ve resimler geri geldi'],
+      ['r3', 'Yedek olmayan bir dosya seçince veriler silinmedi, uyarı verdi']]],
     ['Arayüz', [
-      ['a1', 'Alt bar seçili sekmeyi yukarı kaldırıp ışığını yakıyor ve her sayfada görünüyor'],
-      ['a2', 'Çok ürün varken arama ve sayfalar takılmadan çalışıyor']]],
-    ['Paylaşım', [
-      ['p1', 'Deneyim ve öneri metni WhatsApp ile gönderildi'],
-      ['p2', 'Dış bağlantılar tarayıcıda açıldı, uygulamaya geri dönülebildi']]]
+      ['a1', 'Geri tuşu açık ürünü kapatıyor, sonra Ara sekmesine dönüyor; uygulamadan birden çıkmıyor'],
+      ['a2', 'Çok ürün varken arama ve sayfalar takılmadan çalışıyor'],
+      ['a3', 'Kaydet düğmesine basınca büyük belge birkaç saniyede kaydedildi']]]
   ];
   function vt() {
     if (!db.vtest || db.vtest.ver !== APP_VERSION) db.vtest = { ver: APP_VERSION, marks: {}, notes: {}, gnotes: {} };
@@ -990,6 +1282,7 @@
     var about = '<div class="kv"><span>Uygulama</span><b>Klavuz ' + APP_VERSION + '</b></div>' +
       '<div class="kv"><span>Kayıt</span><b>' + Object.keys(db.items).length + ' ürün · ' + Object.keys(db.offers).length + ' teklif · ' + db.docs.length + ' belge</b></div>' +
       '<div class="kv"><span>Çalışma</span><b>Türkçe · çevrimdışı</b></div>' +
+      '<div class="kv"><span>Kayıt alanı</span><b>' + (storeMode === 'idb' ? 'geniş veritabanı' : 'dar alan (eski yöntem)') + (pdfEngine ? ' · okuma motoru: ' + pdfEngine : '') + '</b></div>' +
       '<div class="kv"><span>Firma</span><b>HC MARIN WORKS</b></div>' +
       '<div class="muted">Kayıtlar dış sunucuya gönderilmez. Veri yalnız sizin başlattığınız paylaşım ve yedekle cihazdan çıkar.</div>';
     return '<h1 class="ptitle">Ayarlar</h1>' +
@@ -1020,7 +1313,7 @@
     else if (st.tab === 'sepet') v.innerHTML = viewCart();
     else if (st.tab === 'uyari') v.innerHTML = viewAlerts();
     else if (st.tab === 'ayar') v.innerHTML = viewSettings();
-    hydrateImages(v);
+    hydrateImages(v); drawStrip();
     if (st.item && st.pick) loadPicker();
     if (!keep) window.scrollTo(0, 0);
   }
@@ -1053,42 +1346,27 @@
       if (!it) el.innerHTML = '';
     });
   }
-  async function readDraft(force) {
-    var supplier = ($('#supName').value || '').trim(), kind = $('#kind').value, f = $('#docFile').files[0] || (force && st.lastFile);
+  function readDraft() {
+    var supplier = ($('#supName').value || '').trim(), kind = $('#kind').value, files = Array.prototype.slice.call($('#docFile').files || []);
     if (!supplier) return toast('Önce tedarikçi adını yazın.');
-    if (!f) return toast('Önce bir belge seçin.');
-    if (force && kind === 'sertifika') kind = 'katalog';
-    st.catSupplier = supplier; st.catKind = kind; st.lastFile = f; st.readNote = '';
-    var msg = $('#readMsg'); msg.textContent = 'Okunuyor...';
-    try {
-      var res = await readFile(f, function (p, n, what) { msg.textContent = 'Sayfa ' + p + ' / ' + n + ' (' + (what || 'okunuyor') + ')...'; }, kind, force);
-      if (res.cert) {
-        st.draft = { cert: true, pages: res.pages, rows: [], supplier: supplier, kind: 'sertifika', name: f.name, docId: uid() };
-      } else if (!res.rows.length) {
-        // Ürün tablosu çıkmayan belge (tanıtım dosyası, taranmış katalog, tabloları resim olan katalog):
-        // kaybolmasın diye sayfa görüntüsü olarak saklanabilir.
-        var why = res.textLength < 20 ? 'Belgede yazı yok: sayfalar taranmış resim. Ürünler okunamadı.' :
-          (res.images && res.images.length ? 'Ürün tablosu bulunamadı. Bu bir tanıtım dosyası olabilir ya da tabloları resim olarak duruyor olabilir.' : 'Belgede ürün tablosu bulunamadı.');
-        st.draft = null; st.readNote = why;
-        if (/\.pdf$/i.test(f.name)) {
-          msg.textContent = 'Sayfa görüntüleri hazırlanıyor...';
-          var pg = await readFile(f, null, 'sertifika', false);
-          st.draft = { cert: true, pages: pg.pages, rows: [], supplier: supplier, kind: 'sertifika', name: f.name, docId: uid(), reason: why }; st.readNote = '';
-        }
-      } else {
-        var note = res.emptyPages ? res.emptyPages + ' sayfada yazı yok (taranmış resim); o sayfalar okunamadı.' : '';
-        var dr = prepDraft(res.rows);
-        st.draft = { rows: dr, images: res.images, supplier: supplier, kind: kind, name: f.name, docId: uid(), note: note, report: buildReport(f.name, supplier, kind, res, dr) };
-      }
-    } catch (err) { st.draft = null; st.readNote = 'Okunamadı: ' + err.message; }
-    render();
+    if (!files.length) return toast('Önce bir ya da birkaç belge seçin.');
+    st.catSupplier = supplier; st.catKind = kind;
+    $('#docFile').value = '';
+    enqueue(files, supplier, kind);
   }
-  function saveDraft() {
-    var d = st.draft; if (!d) return;
-    var r = commit(d);
-    st.draft = null; st.lastFile = null;
-    toast(r.cert ? 'Belge kaydedildi' : 'Kaydedildi: ' + r.created + ' yeni, ' + r.updated + ' güncellendi, ' + r.changed + ' fiyat değişti' + (r.pending ? ', ' + r.pending + ' ana katalog bekliyor' : ''));
-    render();
+  function jobById(id) { return jobs.filter(function (j) { return j.id === id; })[0]; }
+  function saveMsg(r) {
+    return r.cert ? 'Belge kaydedildi' : 'Kaydedildi: ' + r.created + ' yeni, ' + r.updated + ' güncellendi, ' + r.changed + ' fiyat değişti' + (r.pending ? ', ' + r.pending + ' ana katalog bekliyor' : '');
+  }
+  function saveDraft(id) {
+    var j = jobById(id); if (!j || j.status !== 'ready') return;
+    toast(saveMsg(saveJobDraft(j)));
+    render(true);
+  }
+  function saveAllDrafts() {
+    var n = 0;
+    jobs.filter(function (j) { return j.status === 'ready'; }).forEach(function (j) { saveJobDraft(j); n++; });
+    toast(n + ' belge kaydedildi'); render(true);
   }
   function saveEdit(oid) {
     var o = db.offers[oid], it = db.items[o && o.itemId];
@@ -1103,27 +1381,53 @@
     if (o.status === 'check' && o.code) o.status = 'ok';
     st.edit = null; save(); toast('Kaydedildi'); render();
   }
-  function exportData() {
-    toast('Yedek hazırlanıyor...');
-    kvAll().then(function (imgs) {
-      var txt = JSON.stringify(Object.assign({}, db, { _images: imgs })), name = 'klavuz-yedek-' + today() + '.json';
-      if (window.KlavuzAndroid && KlavuzAndroid.saveFile) { KlavuzAndroid.saveFile(name, txt); return; }
-      var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([txt], { type: 'application/json' })); a.download = name; a.click();
-    });
+  // Yedek tek seferde belleğe alınmaz; parça parça üretilir (resimli büyük yedeklerde çökmesin diye).
+  async function backupParts(emit) {
+    var head = JSON.stringify(Object.assign({ _fmt: 2, _ver: APP_VERSION, _date: today() }, db));
+    await emit(head.slice(0, -1) + ',"_images":{');
+    var keys = await kvKeys(), first = true;
+    for (var i = 0; i < keys.length; i++) {
+      var v = await kvRead(keys[i]); if (v == null) continue;
+      await emit((first ? '' : ',') + JSON.stringify(keys[i]) + ':' + JSON.stringify(v)); first = false;
+    }
+    await emit('}}');
   }
+  function exportData() {
+    var name = 'klavuz-yedek-' + today() + '.json';
+    flush();
+    // Android: önce kayıt yeri seçilir, sonra KlavuzSaveReady çağrılır ve yedek parça parça yazılır
+    if (window.KlavuzAndroid && KlavuzAndroid.saveBegin) { KlavuzAndroid.saveBegin(name); return; }
+    toast('Yedek hazırlanıyor...');
+    var parts = [];
+    backupParts(function (s) { parts.push(s); }).then(function () {
+      var a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(parts, { type: 'application/json' })); a.download = name; a.click();
+    }, function () { toast('Yedek hazırlanamadı.'); });
+  }
+  window.KlavuzSaveReady = function () {
+    toast('Yedek yazılıyor...');
+    var N = 200000;
+    backupParts(function (s) {
+      for (var i = 0; i < s.length;) {
+        var e = Math.min(s.length, i + N), c = s.charCodeAt(e - 1);
+        if (e < s.length && c >= 0xD800 && c <= 0xDBFF) e++; // çift parçalı harfi ortasından bölme
+        KlavuzAndroid.saveChunk(s.slice(i, e)); i = e;
+      }
+    }).then(function () { KlavuzAndroid.saveEnd(true); }, function () { KlavuzAndroid.saveEnd(false); });
+  };
   function importData(txt) {
-    try {
-      var obj = JSON.parse(txt), imgs = obj._images; delete obj._images;
-      db = Object.assign(empty(), obj);
-      db.settings = Object.assign(empty().settings, db.settings || {});
-      db.settings.notify = Object.assign({}, DEFAULT_NOTIFY, db.settings.notify || {});
-      if (imgs) { kvClear(); Object.keys(imgs).forEach(function (k) { kvPut(k, imgs[k]); }); }
-      save(); toast('Yedek yüklendi' + (imgs ? ' (resimlerle birlikte)' : '')); render();
-    } catch (err) { toast('Yedek dosyası okunamadı.'); }
+    var obj;
+    try { obj = JSON.parse(txt); } catch (err) { return toast('Yedek dosyası okunamadı.'); }
+    if (!obj || typeof obj.items !== 'object' || typeof obj.offers !== 'object' || !Array.isArray(obj.docs)) return toast('Bu dosya Klavuz yedeği değil.');
+    var cur = Object.keys(db.items).length, inc = Object.keys(obj.items).length;
+    if ((cur || db.docs.length) && !confirm('Yedekte ' + inc + ' ürün ve ' + obj.docs.length + ' belge var.\nYedek yüklenince şu anki ' + cur + ' ürün ve ' + db.docs.length + ' belge silinir, yerine yedektekiler gelir.\nDevam edilsin mi?')) return;
+    var imgs = obj._images; delete obj._images; delete obj._fmt; delete obj._ver; delete obj._date;
+    db = normalize(obj);
+    if (imgs) { kvClear(); Object.keys(imgs).forEach(function (k) { kvPut(k, imgs[k]); }); }
+    save(); toast('Yedek yüklendi' + (imgs ? ' (resimlerle birlikte)' : '')); render();
   }
   function copyText() { copyStr($('#cust').textContent); }
   function repOf(id) {
-    if (id === 'draft') return st.draft && st.draft.report;
+    var j = jobById(id); if (j) return j.report;
     var d = db.docs.find(function (x) { return x.id === id; }); return d && d.report;
   }
   // Ada uygulamasından alınan firma profil dosyası (JSON): firma bilgileri tek seferde doldurulur
@@ -1182,14 +1486,22 @@
         deleteDoc(id); toast('Belge silindi'); render(); break;
       case 'cartdel': db.cart = db.cart.filter(function (l) { return l.offerId !== id; }); save(); render(); break;
       case 'cartclear': if (confirm('Sepet boşaltılsın mı?')) { db.cart = []; save(); render(); } break;
-      case 'read': readDraft(false); break;
-      case 'readforce': readDraft(true); break;
+      case 'read': readDraft(); break;
+      case 'readforce': {
+        var jf = jobById(id); if (!jf) break;
+        if (!jf.file) { toast('Dosyayı yeniden seçip okutun.'); break; }
+        resetJob(jf); jf.force = true; if (jf.kind === 'sertifika') jf.kind = 'katalog'; jf.status = 'wait';
+        drawJobs(); pump(); break;
+      }
+      case 'jobopen': st.jobOpen = st.jobOpen === id ? null : id; drawJobs(); break;
+      case 'jobstop': { var js = jobById(id); if (js && confirm('Okuma durdurulsun mu? Bu belgeden okunanlar silinir.')) { js.stop = true; js.prog = 'Durduruluyor...'; drawJobs(); } break; }
+      case 'jobdel': { var jd = jobById(id); if (jd) { dropJob(jd); drawJobs(); } break; }
+      case 'saveall': saveAllDrafts(); break;
       case 'opendoc': st.docView = id; render(); break;
       case 'closedoc': st.docView = null; render(); break;
-      case 'save': saveDraft(); break;
-      case 'cancel': st.draft = null; st.readNote = ''; render(); break;
+      case 'save': saveDraft(id); break;
       case 'export': exportData(); break;
-      case 'wipe': if (confirm('Tüm veriler silinsin mi? Bu işlem geri alınamaz.')) { db = empty(); kvClear(); save(); render(); } break;
+      case 'wipe': if (confirm('Tüm veriler silinsin mi? Bu işlem geri alınamaz.')) { jobs.slice().forEach(function (j) { if (j.status === 'run') j.stop = true; else dropJob(j); }); db = empty(); kvClear(); save(); render(); } break;
       case 'print': window.print(); break;
       case 'copy': copyText(); break;
       case 'toggle': st.open[id] = !st.open[id]; render(true); break;
@@ -1236,8 +1548,37 @@
   });
 
   window.KlavuzSaved = function (ok) { toast(ok ? 'Yedek kaydedildi' : 'Yedek kaydedilemedi'); };
-  db = load();
-  openImgDb().catch(function () {}).then(function () { render(); });
+  // Android geri tuşu: önce açık sayfayı kapatır, sonra Ara sekmesine döner. false dönerse uygulama arka plana alınır.
+  window.KlavuzBack = function () {
+    if (st.item) { if (st.pick) st.pick = false; else if (st.edit) st.edit = null; else st.item = null; render(); return true; }
+    if (st.docView) { st.docView = null; render(); return true; }
+    if (st.tab !== 'ara') { go('ara'); return true; }
+    return false;
+  };
+  document.addEventListener('visibilitychange', function () { if (document.hidden && saveTimer) flush(); });
+  window.addEventListener('pagehide', function () { if (saveTimer) flush(); });
+
+  // Açılış: veritabanını aç; eski sürümün kaydı varsa bir kez taşı. Veritabanı açılamazsa eski yöntemle çalış.
+  async function boot() {
+    var old = loadLs();
+    db = normalize(old);
+    try {
+      await openDb();
+      var data = await storeAll('data');
+      storeMode = 'idb';
+      if (data.meta) {
+        var d = Object.assign({}, data.rest || {});
+        PARTS.forEach(function (k) { if (data[k]) d[k] = data[k]; });
+        db = normalize(d);
+      } else if (!(await flush())) throw new Error('taşınamadı');
+      else if (old) { try { localStorage.setItem('klavuz.tasindi', today()); } catch (e) {} }
+    } catch (e) { storeMode = 'ls'; db = normalize(old); saveBad = false; }
+    touch();
+    await loadJobs();
+    window.KlavuzHazir = true;
+    render();
+  }
+  boot();
   if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     navigator.serviceWorker.register('sw.js').catch(function () {});
   }

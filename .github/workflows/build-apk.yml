@@ -2,7 +2,7 @@ name: Build APK
 
 on:
   push:
-    branches: [ilk-surum, main, ccr-2f65d271-hbxt5y]
+    branches: [ilk-surum, main, ccr-2f65d271-hbxt5y, ccr-9862a3e5-483rrf]
   workflow_dispatch:
 
 permissions:

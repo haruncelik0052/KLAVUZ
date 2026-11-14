@@ -11,7 +11,7 @@
   :root { --ink:#1F2937; --muted:#6B7280; --bg:#F3F4F6; --card:#fff; --dark:#1E293B; --gold:#F59E0B; --line:#E5E7EB; --ok:#065F46; --okbg:#ECFDF5; --warn:#92400E; --warnbg:#FEF3C7; --pend:#1E3A8A; --pendbg:#EFF6FF; }
   @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --ink:#E5E7EB; --muted:#9CA3AF; --bg:#0F172A; --card:#1E293B; --line:#334155; } }
   * { box-sizing: border-box; }
-  body { margin:0; font-family: Inter, system-ui, sans-serif; color:var(--ink); background:var(--bg); padding-bottom:calc(96px + env(safe-area-inset-bottom)); }
+  body { margin:0; font-family: Inter, system-ui, sans-serif; color:var(--ink); background:var(--bg); padding-bottom:calc(140px + env(safe-area-inset-bottom)); }
   header.top { background:var(--dark); color:#fff; padding:12px 16px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:5; }
   header.top b { font-size:20px; }
   main { max-width:960px; margin:0 auto; padding:14px 16px; display:flex; flex-direction:column; gap:12px; }
@@ -52,7 +52,11 @@
   nav.tabs .n { position:absolute; top:-4px; left:calc(50% + 8px); background:var(--gold); color:#111827; border-radius:999px; padding:0 6px; font-size:11px; font-weight:700; line-height:18px; min-width:18px; }
   nav.tabs .n.zero { display:none; }
   @media (prefers-reduced-motion: reduce) { nav.tabs .ic { transition:none; } }
-  #toast { position:fixed; left:50%; bottom:calc(104px + env(safe-area-inset-bottom)); transform:translateX(-50%) translateY(20px); background:var(--dark); color:#fff; padding:10px 16px; border-radius:8px; opacity:0; transition:.25s; pointer-events:none; font-size:14px; max-width:90%; z-index:9; }
+  #toast { position:fixed; left:50%; z-index:7; bottom:calc(150px + env(safe-area-inset-bottom)); transform:translateX(-50%) translateY(20px); background:var(--dark); color:#fff; padding:10px 16px; border-radius:8px; opacity:0; transition:.25s; pointer-events:none; font-size:14px; max-width:90%; z-index:9; }
+  #strip { display:none; position:fixed; left:8px; right:8px; bottom:calc(100px + env(safe-area-inset-bottom)); z-index:5; background:#1E3A8A; color:#fff; border-radius:10px; padding:8px 12px; font-size:13px; font-weight:600; text-align:left; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; box-shadow:0 4px 14px rgba(0,0,0,.25); }
+  #strip.show { display:block; } #strip.bad { background:#B91C1C; }
+  .jobs { display:flex; flex-direction:column; gap:10px; } .jobs:empty { display:none; }
+  .bar { height:8px; background:var(--line); border-radius:999px; overflow:hidden; } .bar i { display:block; height:100%; background:#2563EB; border-radius:999px; transition:width .2s; }
   #toast.show { opacity:1; transform:translateX(-50%); }
   .pcard { flex-direction:row; gap:12px; align-items:center; }
   .ptxt { display:flex; flex-direction:column; gap:4px; min-width:0; flex:1; }
@@ -122,7 +126,7 @@
     body * { visibility:hidden; }
     #cust, #cust * { visibility:visible; }
     #cust { position:absolute; left:0; top:0; width:100%; border:0; }
-    header.top, nav.tabs { display:none; }
+    header.top, nav.tabs, #strip { display:none !important; }
   }
 </style>
 </head>
@@ -136,10 +140,10 @@
   <button data-tab="uyari"><span class="ic"><svg viewBox="0 0 24 24"><path d="M6 17V11a6 6 0 0112 0v6l1.5 2h-15z"/><path d="M10 21h4"/></svg></span><span>Uyarılar</span><span class="n zero" id="alertBadge">0</span></button>
   <button data-tab="ayar"><span class="ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/></svg></span><span>Ayarlar</span></button>
 </nav>
+<button id="strip" data-tab="katalog" aria-live="polite"></button>
 <div id="toast"></div>
 
 <script src="vendor/pdf.min.js"></script>
-<script src="vendor/pdf.worker.min.js"></script>
 <script src="vendor/xlsx.full.min.js"></script>
 <script src="okuyucu.js"></script>
 <script src="app.js"></script>
