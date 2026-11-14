@@ -1,5 +1,7 @@
 # Klavuz — devir notu
 
+> **Sonraki sürüm için istek listesi, bilinen eksikler ve devralan oturumun ilk görevi: `SONRAKI_SURUM.md`.** Önce bu dosyayı, sonra onu okuyun.
+
 Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılmak üzere hazırlandı.
 
 ## Depo ve dal
