@@ -356,6 +356,83 @@ async function makeCatalog(browser, file, pages) {
   await page.click('button[data-act="ackall"]'); await settle(page);
   ok(!(await page.$('.cmp')), '"Hepsini gördüm" fiyat uyarılarını kapattı');
 
+  console.log('13. ZIP dosyası kendiliğinden açılır');
+  {
+    const zlib = require('zlib');
+    const crcT = []; for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; crcT[n] = c >>> 0; }
+    const crc = (b) => { let c = 0xFFFFFFFF; for (const x of b) c = crcT[(c ^ x) & 255] ^ (c >>> 8); return (c ^ 0xFFFFFFFF) >>> 0; };
+    const mkZip = (entries) => {
+      const parts = [], cds = []; let off = 0;
+      for (const e of entries) {
+        const name = Buffer.from(e.name, 'utf8'), data = e.store ? e.data : zlib.deflateRawSync(e.data), lh = Buffer.alloc(30), cd = Buffer.alloc(46);
+        lh.writeUInt32LE(0x04034b50, 0); lh.writeUInt16LE(20, 4); lh.writeUInt16LE(0x800, 6); lh.writeUInt16LE(e.store ? 0 : 8, 8); lh.writeUInt32LE(crc(e.data), 14);
+        lh.writeUInt32LE(data.length, 18); lh.writeUInt32LE(e.data.length, 22); lh.writeUInt16LE(name.length, 26);
+        cd.writeUInt32LE(0x02014b50, 0); cd.writeUInt16LE(20, 4); cd.writeUInt16LE(20, 6); cd.writeUInt16LE(0x800, 8); cd.writeUInt16LE(e.store ? 0 : 8, 10); cd.writeUInt32LE(crc(e.data), 16);
+        cd.writeUInt32LE(data.length, 20); cd.writeUInt32LE(e.data.length, 24); cd.writeUInt16LE(name.length, 28); cd.writeUInt32LE(off, 42);
+        parts.push(lh, name, data); cds.push(cd, name); off += 30 + name.length + data.length;
+      }
+      const cdBuf = Buffer.concat(cds), end = Buffer.alloc(22);
+      end.writeUInt32LE(0x06054b50, 0); end.writeUInt16LE(entries.length, 8); end.writeUInt16LE(entries.length, 10); end.writeUInt32LE(cdBuf.length, 12); end.writeUInt32LE(off, 16);
+      return Buffer.concat(parts.concat([cdBuf, end]));
+    };
+    const zipPdf = path.join(tmp, 'zip-katalog.pdf');
+    await makeCatalog(browser, zipPdf, 2);
+    const pdfBuf = Buffer.from(fs.readFileSync(zipPdf).toString('latin1').replace(/KÜRESEL/g, 'KÜRESEL'), 'latin1');
+    const inner = mkZip([{ name: 'iç/liste.csv', data: Buffer.from('ZP-90002,Zip iç içe ürün,222\n') }]);
+    const zf = path.join(tmp, 'kataloglar.zip');
+    fs.writeFileSync(zf, mkZip([{ name: 'katalog/zip-katalog.pdf', data: pdfBuf }, { name: 'fiyat/zip-liste.csv', data: Buffer.from('ZP-90001,Zip içinden ürün,111\n'), store: true },
+      { name: '__MACOSX/._x.pdf', data: Buffer.from('x') }, { name: 'resim.jpg', data: Buffer.from('x') }, { name: 'ic.zip', data: inner }]));
+    const before = await stats(page);
+    await page.click('button[data-tab="katalog"]');
+    await page.fill('#brandName', 'ZIPMARKA'); await page.fill('#supName', ''); await page.selectOption('#kind', 'katalog');
+    await page.setInputFiles('#docFile', zf);
+    await page.click('button[data-act="read"]');
+    await page.waitForFunction(() => document.querySelectorAll('.job button[data-act="save"]').length === 3, null, { timeout: 60000 });
+    const names = await page.$$eval('.job h3', (els) => els.map((e) => e.textContent).join(' | '));
+    ok(/zip-katalog\.pdf/.test(names) && /zip-liste\.csv/.test(names) && /liste\.csv/.test(names) && !/resim|MACOSX/.test(names), 'zip içindeki üç belge sıraya alındı, öbür dosyalar atlandı: ' + names);
+    await page.click('button[data-act="saveall"]'); await settle(page);
+    const after = await stats(page);
+    ok(after.docs === before.docs + 3 && after.names.includes('Zip içinden ürün') && after.names.includes('Zip iç içe ürün'), 'zip içindeki belgeler (iç içe zip dahil) okunup kaydedildi ' + before.docs + '>' + after.docs + ' ' + after.names.filter((n) => /Zip|VANA SERİ [12]$/.test(n)).join(','));
+  }
+
+  console.log('14. Uygulama içi tarayıcıdan ürün alma');
+  await page.evaluate(() => { window._open = []; window._imgs = []; window.KlavuzAndroid = { openBrowser(u) { window._open.push(u); }, fetchImage() {}, fetchImageFor(id, u) { window._imgs.push(u); setTimeout(() => window.KlavuzImageFor(id, ''), 0); } }; });
+  await page.click('button[data-tab="katalog"]');
+  await page.click('button[data-act="shop"][data-id="0"]');
+  ok(await page.evaluate(() => window._open[0] === 'https://www.amazon.com.tr/'), 'Amazon uygulama içi tarayıcıda açılmak üzere istendi');
+  await page.fill('#q', 'sintine pompası'); await page.waitForTimeout(150);
+  await page.click('#webfind button[data-act="shop"][data-id="1"]');
+  ok(await page.evaluate(() => /hepsiburada\.com\/ara\?q=sintine%20pompas%C4%B1$/.test(window._open[1])), '"Bunu internette bul" aramayı sitede açtı');
+  await page.fill('#q', '');
+  const amazonList = '<html><body>' + [1, 2, 3].map((n) => '<div data-component-type="s-search-result" data-asin="B00000000' + n + '"><img class="s-image" src="https://m.media-amazon.com/images/I/a' + n + '.jpg">' +
+    '<h2><a href="/Seaflo-Pompa-' + n + '/dp/B00000000' + n + '/ref=sr_1_' + n + '?k=x"><span>Seaflo Sintine Pompası Model ' + n + '</span></a></h2><span class="a-price"><span class="a-offscreen">' + n + '.250,00 TL</span></span></div>').join('') + '</body></html>';
+  await page.evaluate((h) => window.KlavuzGrab(h, 'https://www.amazon.com.tr/s?k=sintine'), amazonList);
+  ok(/Sayfada 3 ürün bulundu/.test(await page.textContent('#grabbox')) && await page.inputValue('[data-gb="seller"]') === 'Amazon', 'arama sayfasındaki üç ürün liste olarak geldi');
+  await page.uncheck('[data-gsel="2"]');
+  ok(/\(2\)/.test(await page.textContent('#grabsave')), 'işareti kaldırılan ürün sayıdan düştü');
+  await page.click('#grabsave'); await settle(page);
+  let aoffs = (await idbGet('offers')).filter((o) => o.supplier === 'Amazon' && /\/dp\/B00000000\d$/.test(o.link || ''));
+  ok(aoffs.length === 2 && aoffs.some((o) => o.listPrice === 1250 && o.link === 'https://www.amazon.com.tr/Seaflo-Pompa-1/dp/B000000001'), 'seçilen iki ürün fiyatı ve sade bağlantısıyla eklendi');
+  ok(await page.evaluate(() => window._imgs.length === 2), 'resimler sırayla indirilmek üzere istendi');
+  await page.evaluate((h) => window.KlavuzGrab(h.replace('1.250,00', '1.400,00'), 'https://www.amazon.com.tr/s?k=sintine'), amazonList);
+  await page.click('#grabsave'); await settle(page);
+  aoffs = (await idbGet('offers')).filter((o) => o.supplier === 'Amazon' && /\/dp\/B00000000\d$/.test(o.link || ''));
+  ok(aoffs.length === 3 && aoffs.some((o) => o.listPrice === 1400 && o.lastDir === 'up'), 'aynı sayfa yeniden alınınca ürün çoğalmadı; fiyat güncellendi, eksik olan eklendi');
+  const ldList = '<html><head><script type="application/ld+json">{"@type":"ItemList","itemListElement":[' + [1, 2].map((n) => '{"@type":"ListItem","position":' + n + ',"item":{"@type":"Product","name":"Rule Pompa ' + n + '00 GPH","url":"https://www.hepsiburada.com/rule-' + n + '-p-HB' + n + '","image":"https://img.example.com/' + n + '.jpg","offers":{"price":"' + n + '999.50","priceCurrency":"TRY"}}}').join(',') + ']}<\/script></head><body></body></html>';
+  await page.evaluate((h) => window.KlavuzGrab(h, 'https://www.hepsiburada.com/ara?q=rule'), ldList);
+  ok(/Sayfada 2 ürün bulundu/.test(await page.textContent('#grabbox')) && /1\.999,5/.test(await page.textContent('#grabbox')), 'sitenin yapısal listesinden ürünler ve fiyatlar alındı ' + (await page.textContent('#grabbox').catch(() => 'kutu yok')).slice(0, 300));
+  await page.click('button[data-act="grabcancel"]');
+  const generic = '<html><body><ul>' + [1, 2, 3].map((n) => '<li><a href="/urun/vana-' + n + '"><img alt="Pirinç Küresel Vana ' + n + '/2 inç" data-src="/img/v' + n + '.jpg"></a><div class="fiyat">' + n + '45,90 TL</div></li>').join('') + '</ul></body></html>';
+  await page.evaluate((h) => window.KlavuzGrab(h, 'https://www.ornekmarin.com/kategori/vanalar'), generic);
+  ok(/Sayfada 3 ürün bulundu/.test(await page.textContent('#grabbox')) && /245,9/.test(await page.textContent('#grabbox')) && await page.inputValue('[data-gb="seller"]') === 'ornekmarin.com', 'tanınmayan sitede de ürün bağlantısı + resim + fiyat kalıbıyla liste çıktı ' + (await page.textContent('#grabbox').catch(() => 'kutu yok')).slice(0, 300));
+  await page.click('button[data-act="grabcancel"]');
+  await page.evaluate(() => window.KlavuzGrab('<html><head><meta property="og:type" content="product"><meta property="og:title" content="Whale Gulper 220 Pompa 12V"><meta property="product:price:amount" content="6450.00"></head><body></body></html>', 'https://www.ornekmarin.com/urun/whale-gulper'));
+  ok(await page.inputValue('[data-np="name"]') === 'Whale Gulper 220 Pompa 12V' && await page.inputValue('[data-np="price"]') === '6450', 'ürün sayfasında tek ürün formu açıldı');
+  await page.evaluate(() => window.KlavuzBack());
+  await page.evaluate(() => window.KlavuzGrab('<html><body><p>Hakkımızda</p></body></html>', 'https://www.ornekmarin.com/hakkimizda'));
+  ok(/ürün bulunamadı/.test(await page.textContent('#toast')), 'ürün olmayan sayfada açıklayıcı uyarı verildi');
+  await page.evaluate(() => { delete window.KlavuzAndroid; });
+
   console.log('12. Güncelleme: yeni sürüm bulunur, indirme istenir');
   await page.evaluate(() => { window._upd = ''; window.KlavuzAndroid = { checkUpdate() { window._chk = true; }, installUpdate(u) { window._upd = u; } }; });
   const rel = (v, sha) => ({ name: 'Klavuz ' + v + ' test-' + sha, created_at: '2026-11-15T10:00:00Z', assets: [{ name: 'Klavuz-' + sha + '.apk', size: 4100000, browser_download_url: 'https://github.com/haruncelik0052/KLAVUZ/releases/download/test-' + sha + '/Klavuz-' + sha + '.apk' }] });

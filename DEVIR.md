@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `ccr-1df92bb6-t62pv1` dalı (sürüm 0.8.0; `ccr-9862a3e5-483rrf` üzerine kuruldu)
+- Güncel çalışma: `ccr-1df92bb6-t62pv1` dalı (sürüm 0.9.0; `ccr-9862a3e5-483rrf` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -162,3 +162,14 @@ Sıradaki iş: telefon sonucu, sonra OCR.
 - Testler: `tests/e2e.js` 10–12. adımlar (internetten ürün, fiyat karşılaştırma, güncelleme).
 
 Telefonda doğrulanmadı: görünmeyen WebView ile Amazon sayfası okuma, APK indirme ve kurulum ekranı. Bunlar bu ortamda denenemez.
+
+## Sürüm 0.9.0 ekleri (uygulama içi tarayıcı, sayfadan ürün alma, ZIP)
+
+- **Uygulama içi tarayıcı (Android):** `openBrowser(adres)` ana WebView'ın üstünde ikinci bir WebView açar (`buildBrowser`, `showBrowser`): üstte "Kapat", "←", site adı, "Klavuz'a al". "Klavuz'a al" (`grabShop`) açık sayfanın HTML'ini ve adresini `KlavuzGrab(html, adres)` işlevine verir. Geri tuşu önce tarayıcıda geri gider. Boş adresle çağrı tarayıcıyı kaldığı sayfayla yeniden gösterir.
+- **`KlavuzGrab`:** ürün sayfasıysa (`extractProduct().strong`: JSON-LD Product, Amazon `#productTitle` ya da `og:type=product`) tek ürün formu; değilse `extractList` ile liste: JSON-LD ItemList → Amazon arama kutuları (`[data-component-type="s-search-result"]`) → genel kalıp (ürün adresine benzeyen bağlantı + resim + yakınında fiyat). Liste `st.grab` içinde seçmeli gösterilir (`grabHtml`), `saveGrab` kaydeder: aynı bağlantı daha önce alınmışsa yeni ürün açmaz, fiyatı günceller (fiyat geçmişi ve uyarı oluşur). Resimler `imgQueue` ile tek tek indirilir (`fetchImageFor` / `KlavuzImageFor`).
+- **Girişler:** Belge sekmesinde "İnternetten ürün al" kutusu (Amazon, Hepsiburada, Trendyol, n11, Google, serbest adres); arama ekranında "Bunu internette bul" (yazılan söz sitede aranır); paylaşımla gelen üründe bilgi alınamazsa "Sayfayı uygulama içinde aç, oradan al".
+- **ZIP:** `unzipFiles` zip'i kütüphanesiz okur (merkezi dizin + `DecompressionStream('deflate-raw')`); içindeki PDF / Excel / CSV / TXT ve bir kademe iç içe zip sıraya alınır. Şifreli ve 4 GB üstü (zip64) dosyalar desteklenmez.
+- **CSV düzeltmesi:** CSV artık UTF-8 (olmazsa Windows-1254) olarak çözülüp okunuyor; önceden Türkçe harfler bozuluyordu.
+- Testler: `tests/e2e.js` 13 (ZIP) ve 14 (tarayıcıdan alma).
+
+Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfayı, kullanıcı düğmeye basınca okur; sayfaları kendiliğinden gezmez.

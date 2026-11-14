@@ -42,6 +42,12 @@ public class MainActivity extends AppCompatActivity {
     private boolean probeDone;
     private int probeSeq;
     private final android.os.Handler ui = new android.os.Handler(android.os.Looper.getMainLooper());
+    // Uygulama içi tarayıcı (alışveriş sitesi uygulamanın üstünde açılır)
+    private android.widget.FrameLayout root;
+    private android.widget.LinearLayout browserBox;
+    private WebView shop;
+    private android.widget.TextView shopTitle;
+    private android.widget.ProgressBar shopBar;
     private static final String UPDATE_PREFIX = "https://github.com/haruncelik0052/KLAVUZ/releases/download/";
     private static final String UPDATE_LIST = "https://api.github.com/repos/haruncelik0052/KLAVUZ/releases?per_page=100";
 
@@ -118,6 +124,30 @@ public class MainActivity extends AppCompatActivity {
                 return;
             }
             runOnUiThread(() -> probePage(link));
+        }
+
+        /** Alışveriş sitesini uygulamanın içinde açar. Boş adres: tarayıcı kaldığı sayfayla yeniden gösterilir. */
+        @JavascriptInterface
+        public void openBrowser(String link) {
+            runOnUiThread(() -> showBrowser(link));
+        }
+
+        /** Listeden eklenen ürünün resmini indirir ve sayfadaki KlavuzImageFor işlevine ürün kimliğiyle verir. */
+        @JavascriptInterface
+        public void fetchImageFor(String id, String link) {
+            new Thread(() -> {
+                String data = "";
+                try {
+                    byte[] b = download(link, 3 * 1024 * 1024);
+                    if (b != null) data = "data:image/jpeg;base64," + android.util.Base64.encodeToString(b, android.util.Base64.NO_WRAP);
+                } catch (Exception e) {
+                    data = "";
+                }
+                final String js = "window.KlavuzImageFor && KlavuzImageFor(" + org.json.JSONObject.quote(id == null ? "" : id) + "," + org.json.JSONObject.quote(data) + ")";
+                runOnUiThread(() -> {
+                    if (web != null) web.evaluateJavascript(js, null);
+                });
+            }).start();
         }
 
         /** Bağlantıyı uygulamanın dışında (tarayıcıda ya da ilgili uygulamada) açar. */
@@ -260,6 +290,123 @@ public class MainActivity extends AppCompatActivity {
                 if (web != null) web.evaluateJavascript("window.KlavuzSaved && KlavuzSaved(" + ok + ")", null);
             });
         }
+    }
+
+    private android.widget.Button barButton(String text, int bg, int fg) {
+        android.widget.Button b = new android.widget.Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextColor(fg);
+        b.setTextSize(14);
+        b.setMinWidth(0);
+        b.setMinimumWidth(0);
+        float d = getResources().getDisplayMetrics().density;
+        b.setPadding((int) (12 * d), 0, (int) (12 * d), 0);
+        android.graphics.drawable.GradientDrawable g = new android.graphics.drawable.GradientDrawable();
+        g.setColor(bg);
+        g.setCornerRadius(8 * d);
+        b.setBackground(g);
+        android.widget.LinearLayout.LayoutParams lp = new android.widget.LinearLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, (int) (40 * d));
+        lp.setMargins((int) (3 * d), 0, (int) (3 * d), 0);
+        b.setLayoutParams(lp);
+        return b;
+    }
+
+    private void buildBrowser() {
+        float d = getResources().getDisplayMetrics().density;
+        int match = android.view.ViewGroup.LayoutParams.MATCH_PARENT;
+        browserBox = new android.widget.LinearLayout(this);
+        browserBox.setOrientation(android.widget.LinearLayout.VERTICAL);
+        browserBox.setBackgroundColor(0xFFFFFFFF);
+        browserBox.setClickable(true);
+
+        android.widget.LinearLayout bar = new android.widget.LinearLayout(this);
+        bar.setOrientation(android.widget.LinearLayout.HORIZONTAL);
+        bar.setGravity(android.view.Gravity.CENTER_VERTICAL);
+        bar.setBackgroundColor(0xFF1E293B);
+        bar.setPadding((int) (6 * d), (int) (6 * d), (int) (6 * d), (int) (6 * d));
+        android.widget.Button close = barButton("Kapat", 0xFF334155, 0xFFFFFFFF);
+        android.widget.Button back = barButton("←", 0xFF334155, 0xFFFFFFFF);
+        android.widget.Button grab = barButton("Klavuz'a al", 0xFFF59E0B, 0xFF111827);
+        shopTitle = new android.widget.TextView(this);
+        shopTitle.setTextColor(0xFFCBD5E1);
+        shopTitle.setTextSize(12);
+        shopTitle.setSingleLine(true);
+        shopTitle.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        shopTitle.setPadding((int) (8 * d), 0, (int) (8 * d), 0);
+        bar.addView(close);
+        bar.addView(back);
+        bar.addView(shopTitle, new android.widget.LinearLayout.LayoutParams(0, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        bar.addView(grab);
+
+        shopBar = new android.widget.ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
+        shopBar.setMax(100);
+
+        shop = new WebView(this);
+        WebSettings ss = shop.getSettings();
+        ss.setJavaScriptEnabled(true);
+        ss.setDomStorageEnabled(true);
+        ss.setAllowFileAccess(false);
+        ss.setAllowContentAccess(false);
+        ss.setBuiltInZoomControls(true);
+        ss.setDisplayZoomControls(false);
+        ss.setLoadWithOverviewMode(true);
+        ss.setUseWideViewPort(true);
+        android.webkit.CookieManager.getInstance().setAcceptCookie(true);
+        shop.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                // Yalnız web sayfaları; başka uygulama açan adresler (intent, market) engellenir
+                String sc = request.getUrl().getScheme();
+                return !("https".equals(sc) || "http".equals(sc));
+            }
+
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                try {
+                    String h = Uri.parse(url).getHost();
+                    shopTitle.setText(h == null ? "" : h);
+                } catch (Exception e) {
+                    shopTitle.setText("");
+                }
+            }
+        });
+        shop.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public void onProgressChanged(WebView view, int p) {
+                shopBar.setProgress(p);
+                shopBar.setVisibility(p >= 100 ? android.view.View.INVISIBLE : android.view.View.VISIBLE);
+            }
+        });
+        close.setOnClickListener(v -> browserBox.setVisibility(android.view.View.GONE));
+        back.setOnClickListener(v -> {
+            if (shop.canGoBack()) shop.goBack();
+        });
+        grab.setOnClickListener(v -> grabShop());
+
+        browserBox.addView(bar, new android.widget.LinearLayout.LayoutParams(match, android.view.ViewGroup.LayoutParams.WRAP_CONTENT));
+        browserBox.addView(shopBar, new android.widget.LinearLayout.LayoutParams(match, (int) (3 * d)));
+        browserBox.addView(shop, new android.widget.LinearLayout.LayoutParams(match, 0, 1f));
+        root.addView(browserBox, new android.widget.FrameLayout.LayoutParams(match, match));
+    }
+
+    private void showBrowser(String link) {
+        if (root == null) return;
+        if (browserBox == null) buildBrowser();
+        browserBox.setVisibility(android.view.View.VISIBLE);
+        if (link != null && link.startsWith("https://")) shop.loadUrl(link);
+        else if (shop.getUrl() == null) shop.loadUrl("https://www.google.com/");
+    }
+
+    /** Tarayıcıda o an açık olan sayfanın içeriğini uygulamaya (KlavuzGrab) verir ve tarayıcıyı gizler. */
+    private void grabShop() {
+        if (shop == null) return;
+        final String u = shop.getUrl() == null ? "" : shop.getUrl();
+        shop.evaluateJavascript("(function(){try{return document.documentElement.outerHTML.slice(0,4000000);}catch(e){return '';}})()", value -> {
+            browserBox.setVisibility(android.view.View.GONE);
+            String lit = (value == null || "null".equals(value)) ? "\"\"" : value;
+            if (web != null) web.evaluateJavascript("window.KlavuzGrab && KlavuzGrab(" + lit + "," + org.json.JSONObject.quote(u) + ")", null);
+        });
     }
 
     private void updateProgress(int pct, String msg) {
@@ -463,7 +610,9 @@ public class MainActivity extends AppCompatActivity {
         takeIntent(getIntent());
 
         web = new WebView(this);
-        setContentView(web);
+        root = new android.widget.FrameLayout(this);
+        root.addView(web, new android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
 
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
@@ -525,6 +674,11 @@ public class MainActivity extends AppCompatActivity {
 
     /** Geri tuşu: önce sayfa kendi içinde geri gider; gidecek yer yoksa uygulama kapanmaz, arka plana alınır. */
     private void handleBack() {
+        if (browserBox != null && browserBox.getVisibility() == android.view.View.VISIBLE) {
+            if (shop != null && shop.canGoBack()) shop.goBack();
+            else browserBox.setVisibility(android.view.View.GONE);
+            return;
+        }
         if (web == null) {
             moveTaskToBack(true);
             return;
