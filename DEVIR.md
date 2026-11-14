@@ -8,7 +8,7 @@ Bu dosya, Klavuz uygulamasının başka bir Claude oturumuna devrinde kullanılm
 
 - Depo: github.com/haruncelik0052/KLAVUZ
 - Çalışma dalı: `ilk-surum` (`main` dalında sadece README var; birleştirme yapılmadı)
-- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.11.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
+- Güncel çalışma: `claude/klavuz-app-handover-mtewnk` dalı (sürüm 0.11.2; `ccr-1df92bb6-t62pv1` üzerine kuruldu)
 
 ## Dosyalar
 
@@ -206,3 +206,9 @@ Toplu tarama yok: uygulama yalnız kullanıcının ekranında açık olan sayfay
 - Düzeltme: `MAX_PX = 4.6e6` (A4 ölçek 3'e sığar, çift sayfada ölçek ~2,15'e düşer; `user_defined_dpi` sayfaya göre). `prep` artık `async`; her ~25 ms'de ana iş parçacığını bırakır (en uzun kilit 418 → 45 ms). Flowmaster sonucu değişmedi.
 - Durum şeridinde kalan süre: "Sayfa 12 / 208 (OCR ile okunuyor) · yaklaşık 1 sa 40 dk kaldı" (bu oturumda okunan sayfaların ortalamasından).
 - Seaflo içeriği: her ürünün altında tek satırlık, çok küçük yazılı, fiyatsız model tablosu (SFH03-08-01 vb.); OCR'dan az ve kusurlu satır çıkıyor (parça 12: 7 sayfa, 8 satır). Bu katalog için asıl kaynak Drive'daki `seaflo-com-2026-10-28.xlsx` / `.csv` ürün listesidir. Drive'da 10 MB altına bölünmüş parçalar var (`SEAFLO_2026_SEAFLO_Marine_Equipment_Catalog_NN.pdf`).
+
+## Sürüm 0.11.2 (Drive'dan seçilen büyük dosya)
+
+- Kullanıcı 0.11.1'de Seaflo (93 MB, Drive'dan seçildi) için "Okunamadı: A requested file or directory could not be found..." aldı (DOMException NotFoundError). Neden: 8 MB üstü PDF parça parça okunur (`PDFDataRangeTransport` + `file.slice`); Drive'ın `content://` adresi okuma sürerken erişimi kesebiliyor.
+- Düzeltme (MainActivity `deliverFiles`): seçilen her dosya arka planda `cacheDir/secilen/<zaman>/<i>/<asıl ad>` altına kopyalanır, WebView'e `file://` adresi verilir; kopyalanamazsa asıl adres. Kopyalama başlarken "Dosya hazırlanıyor..." (`window.KlavuzToast`). 2 günden eski kopyalar açılışta silinir (`cleanPicked`). Bu hata yine çıkarsa iş kartında sade açıklama yazar.
+- Bu ortamda Android derlenip denenemez; telefonda doğrulanmalı.

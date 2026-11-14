@@ -1,8 +1,8 @@
 # Klavuz — sonraki sürüm için devir ve istek listesi
 
-## GÜNCEL DEVİR (0.11.1, 14.11.2026) — önce burayı okuyun
+## GÜNCEL DEVİR (0.11.2, 14.11.2026) — önce burayı okuyun
 
-- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.11.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
+- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.11.2; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
 - **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Öncelik verimli uygulama; ince ayar kullandıkça yapılır.
 - **APK teslimi:** Her sürümde APK sohbetin içinde dosya olarak verilir: push sonrası derleme bitince (yaklaşık 1,5–2 dk)
   `curl -sSL -o apk/Klavuz-<sürüm>.apk https://github.com/haruncelik0052/KLAVUZ/releases/download/test-<commit7>/Klavuz-<commit7>.apk`

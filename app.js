@@ -3,7 +3,7 @@
 
   // ---------- Yardımcılar ----------
   var KEY = 'klavuz.v1';
-  var APP_VERSION = '0.11.1';
+  var APP_VERSION = '0.11.2';
   var $ = function (s) { return document.querySelector(s); };
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function uid() { return Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4); }
@@ -1086,7 +1086,12 @@
     try { await runJob(j); }
     catch (err) {
       if (j.stop) { dropJob(j); j = null; }
-      else { j.status = 'error'; j.err = (err && err.message) || String(err); await saveJob(j); }
+      else {
+        j.status = 'error'; j.err = (err && err.message) || String(err);
+        // Telefonun dosya izni okuma sırasında kesildi (çoğunlukla Drive'dan seçilen büyük dosya)
+        if ((err && (err.name === 'NotFoundError' || err.name === 'NotReadableError')) || /could not be found|could not be read/i.test(j.err)) j.err = 'Dosyaya okuma sırasında ulaşılamadı. Dosyayı yeniden seçin; sorun sürerse önce telefona indirip oradan seçin.';
+        await saveJob(j);
+      }
     }
     running = false;
     if (j && j.status === 'ready') {
@@ -2232,6 +2237,7 @@
       ['o2', 'Okuma raporunda "OCR ile okunan sayfa" sayısı yazıyor; "OCR çalışmadı" yazmıyor'],
       ['o3', 'OCR ile okunan ürünler "OCR ile okundu, kontrol edin" uyarısıyla geldi; kod ve fiyatların çoğu doğru (yanlış örnekleri nota yazın)'],
       ['o4', 'Büyük katalogda (örn. 93 MB Seaflo) "Belge oku" dedikten sonra uygulama donmadı; başka ekranlara geçebildim'],
+      ['o7', 'Drive\'dan büyük bir dosya (örn. 93 MB Seaflo) seçtim; "Dosya hazırlanıyor..." yazdı, sonra okuma başladı, "could not be found" hatası çıkmadı'],
       ['o6', 'Uzun okumada durum şeridinde "yaklaşık ... kaldı" yazıyor ve süre gerçeğe yakın'],
       ['o5', 'Yazısı normal olan kataloglar eskisi gibi hızlı okundu']]],
     ['Uygulama içi tarayıcı', [
@@ -2716,6 +2722,7 @@
     else if (t.id === 'profFile' && t.files[0]) { t.files[0].text().then(importProfile); }
   });
 
+  window.KlavuzToast = function (m) { toast(String(m || '')); };
   window.KlavuzSaved = function (ok) { toast(ok ? 'Dosya kaydedildi' : 'Dosya kaydedilemedi'); };
   // Android geri tuşu: önce açık sayfayı kapatır, sonra Ara sekmesine döner. false dönerse uygulama arka plana alınır.
   // ---------- Güncelleme: internet varsa yeni sürüm GitHub'daki yayınlardan bulunur, uygulama indirip kurulum ekranını açar ----------

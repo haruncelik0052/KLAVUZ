@@ -52,10 +52,69 @@ public class MainActivity extends AppCompatActivity {
     private static final String UPDATE_LIST = "https://api.github.com/repos/haruncelik0052/KLAVUZ/releases?per_page=100";
 
     private void deliverFiles(Uri[] uris) {
-        if (filePathCallback != null) {
-            filePathCallback.onReceiveValue(uris == null || uris.length == 0 ? null : uris);
-            filePathCallback = null;
+        if (filePathCallback == null) return;
+        if (uris == null || uris.length == 0) { filePathCallback.onReceiveValue(null); filePathCallback = null; return; }
+        // Seçilen dosya önce uygulamanın kendi alanına kopyalanır, uygulama oradan okur.
+        // Google Drive gibi kaynaklardan gelen büyük dosya parça parça okunurken erişim kesilebiliyordu
+        // ("A requested file or directory could not be found"). Kopyalanamazsa asıl adres verilir.
+        final ValueCallback<Uri[]> cb = filePathCallback;
+        filePathCallback = null;
+        jsCall("window.KlavuzToast && KlavuzToast('Dosya hazırlanıyor...')");
+        new Thread(() -> {
+            Uri[] out = new Uri[uris.length];
+            File base = new File(getCacheDir(), "secilen/" + System.currentTimeMillis());
+            for (int i = 0; i < uris.length; i++) {
+                out[i] = uris[i];
+                try {
+                    String name = displayName(uris[i]);
+                    File dir = new File(base, String.valueOf(i));
+                    if (!dir.mkdirs() && !dir.isDirectory()) continue;
+                    File f = new File(dir, name);
+                    try (InputStream in = getContentResolver().openInputStream(uris[i]); OutputStream os = new FileOutputStream(f)) {
+                        if (in == null) continue;
+                        byte[] buf = new byte[1 << 16];
+                        int n;
+                        while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
+                    }
+                    out[i] = Uri.fromFile(f);
+                } catch (Exception e) {
+                    out[i] = uris[i];
+                }
+            }
+            ui.post(() -> cb.onReceiveValue(out));
+        }).start();
+    }
+
+    private void jsCall(String js) {
+        ui.post(() -> { if (web != null) web.evaluateJavascript(js, null); });
+    }
+
+    private String displayName(Uri uri) {
+        String name = null;
+        try (android.database.Cursor c = getContentResolver().query(uri, new String[]{android.provider.OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (c != null && c.moveToFirst()) name = c.getString(0);
+        } catch (Exception e) {
+            // ad alınamadı
         }
+        if (name == null || name.trim().isEmpty()) name = uri.getLastPathSegment();
+        if (name == null || name.trim().isEmpty()) name = "belge";
+        return name.replaceAll("[\\\\/:*?\"<>|]", "_");
+    }
+
+    // Eski kopyalar: 2 günden eski seçilmiş dosya kopyaları silinir (yer kaplamasın)
+    private void cleanPicked() {
+        new Thread(() -> {
+            File[] ds = new File(getCacheDir(), "secilen").listFiles();
+            if (ds == null) return;
+            long limit = System.currentTimeMillis() - 2L * 24 * 3600 * 1000;
+            for (File d : ds) if (d.lastModified() < limit) deleteTree(d);
+        }).start();
+    }
+
+    private void deleteTree(File f) {
+        File[] ch = f.listFiles();
+        if (ch != null) for (File c : ch) deleteTree(c);
+        f.delete();
     }
 
     // Belge seçici: Android'in belge penceresi. Telefondaki dosyalar ve Google Drive gibi kaynaklar görünür;
@@ -608,6 +667,7 @@ public class MainActivity extends AppCompatActivity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         takeIntent(getIntent());
+        cleanPicked();
 
         web = new WebView(this);
         root = new android.widget.FrameLayout(this);
