@@ -2,34 +2,33 @@
 
 ## GÜNCEL DEVİR (0.12.1, 14.11.2026) — önce burayı okuyun
 
-- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.12.1; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
-- **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Öncelik verimli uygulama; ince ayar kullandıkça yapılır.
+- **Dal:** `claude/klavuz-app-handover-mtewnk` (son sürüm 0.12.1, commit `fc22fbc`; `ccr-1df92bb6-t62pv1` üzerine kuruldu). Yeni oturum kendi dalını bundan başlatsın ve `.github/workflows/build-apk.yml` içindeki dal listesine eklesin. `main` dalına dokunulmaz.
+- **Çalışma kuralı:** Kullanıcı seçim yapmak istemiyor. Bütün teknik ve tasarım kararlarını Claude verir, sormadan uygular; kullanıcı yalnız telefonda dener. Yanıtlar kısa, sade Türkçe. Uygulamadaki her iş internetsiz çalışmalı (internet isteyen her şey ektir).
 - **APK teslimi:** Her sürümde APK sohbetin içinde dosya olarak verilir: push sonrası derleme bitince (yaklaşık 1,5–2 dk)
   `curl -sSL -o apk/Klavuz-<sürüm>.apk https://github.com/haruncelik0052/KLAVUZ/releases/download/test-<commit7>/Klavuz-<commit7>.apk`
-  ile indirilir ve dosya gönderme aracıyla (SendUserFile) kullanıcıya iletilir. `apk/` klasörü depoya girmez.
-- **Kendini güncelleme (0.8.0):** Yayın başlığı `Klavuz <sürüm> test-<commit7>`. **Her işlevsel değişiklikte `APP_VERSION`, `versionName`, `versionCode`, `sw.js` CACHE birlikte artırılmalı.** Sürüm karşılaştırması sayısaldır (0.10.0 > 0.9.0).
-- **Yayın sayısı:** Uygulama ilk 100 yayına bakar. Yayın sayısı 100'e yaklaşırsa eski test yayınları silinmeli.
-- **Test:** `node tests/okuyucu.test.js`; `python3 -m http.server 8080` sonra `node tests/e2e.js` (15. adım OCR, yaklaşık 10 sn). İkisi de geçmeden gönderme.
-- **Gerçek kataloglarla deneme:** Drive bağlayıcısının `download_file_content` aracı 10 MB altı PDF'i indirir. 0.10.0'da karşılaştırma Playwright içinde uygulamanın kendi `readPdf` işleviyle yapıldı: `window.KLAVUZ_TEST = {}` ile açılınca `KLAVUZ_TEST.api = { readPdf, newStat }` gelir; `KLAVUZ_TEST.chunk = 1` her sayfadan sonra satır verir. Her okuyucu değişikliğinden önce ve sonra Boss, Asel, Elif Depo, GS Marine Valve çıktısı karşılaştırılır. Gerçek PDF depoya konmaz.
-- **0.10.0 (OCR) yapılanlar:** aşağıda "Sürüm 0.10.0" (DEVIR.md). Ölçülen: Flowmaster 0 → 80 ürün / 600 satır (506 kod, 579 ölçü temiz; masaüstünde 120 sn, telefonda birkaç dakika beklenir); Vamates tanıtım broşürü, ürün tablosu yok (OCR yazıları okur, ürün çıkmaz, sayfa görüntüsü olarak saklanır — doğru davranış); Boss, Asel, Elif birebir aynı; GS'de yan yana PN10/PN16 flanş tablolarında daha önce kaybolan 43 ikinci kod artık ayrı seçenek (eskiler değişmedi).
-- **0.11.0 (kategori ağacı) yapılanlar:** DEVIR.md "Sürüm 0.11.0". Sıradaki iş: 4 (Drive'daki öbür kataloglar), sonra 4b (PDF katalog üretme).
-- **Telefonda bekleyenler:** 0.11.0 kategori ağacı, 0.9.0'ın tamamı (kendini güncelleme, uygulama içi tarayıcı, ZIP, CSV) ve 0.10.0 OCR: süre, bellek, WebView'da `file://` altında Tesseract worker'ının açılması (rapor "OCR çalışmadı: ..." derse hata metni oradadır).
-- **Görünüm kararı:** Alışveriş uygulaması düzeni; Amazon'un adı, logosu, birebir görünümü kopyalanmaz.
-- **Sınır:** 10 MB üstü Drive dosyaları ve yedek dosyası bu ortama indirilemiyor.
+  ile indirilir (200 dönene kadar 10 sn arayla) ve SendUserFile ile verilir. `apk/` depoya girmez (.gitignore). Derleme 200 döndüyse Java da derlenmiştir.
+- **Sürüm:** her işlevsel değişiklikte `APP_VERSION` (app.js), `versionName` + `versionCode` (android/app/build.gradle), `sw.js` CACHE birlikte artar. Şu an 0.12.1 / versionCode 16 / klavuz-v16. Sürüm testi listesi `VTEST` (app.js) her sürümde güncellenir.
+- **Test:** `node tests/okuyucu.test.js`; `python3 -m http.server 8080` (KLAVUZ klasöründe) sonra `node tests/e2e.js` (16 adım; 15 OCR, 16 kategori ağacı). İkisi de geçmeden gönderme. Playwright: `NODE_PATH=$(npm root -g)`.
+- **Gerçek kataloglarla deneme:** Drive `download_file_content` 10 MB altı PDF'i indirir. Uygulamanın kendi okuması Playwright'ta: sayfa `window.KLAVUZ_TEST = {...}` ile açılınca `KLAVUZ_TEST.api = { readPdf, newStat, classify, catName }`; `KLAVUZ_TEST.chunk = 1` her sayfadan sonra satır verir; `ocrPsm`, `ocrConf`, `ocrMode` ('blob' / 'dosya'), `ocrDump` denemeler için. Her okuyucu değişikliğinden önce / sonra Boss, Asel, Elif Depo, GS Marine Valve çıktısı karşılaştırılır (OCR / okuyucu değişikliğinden sonra hepsi aynı kaldı; GS'de çift kod sütunu yüzünden +43 satır). Gerçek PDF depoya konmaz.
+- **Bu oturumda yapılanlar (ayrıntı DEVIR.md sonunda):** 0.10.0–0.10.1 telefonda internetsiz OCR (Tesseract.js); 0.11.0 iki kademeli kategori ağacı (23 ana grup, ~125 alt grup, Ayarlar'da düzenleme, sitenin kırıntı yolu ipucu); 0.11.1 büyük katalogda OCR donması (piksel sınırı, parça parça temizleme, kalan süre); 0.11.2 seçilen dosya önce uygulamanın alanına kopyalanır (Drive'daki 93 MB dosyada "could not be found" hatası); 0.12.0 çift sayfa ve ürün bloğu düzeni (Seaflo), "OCR motorunu dene" düğmesi; 0.12.1 OCR motoru blob: adresinden başlatılır.
+- **EN ÖNEMLİ AÇIK KONU — OCR telefonda çalışıyor mu?** Telefondan gelen Boss okuma raporu (0.11.2): "Motor: ana" ve "OCR çalışmadı: undefined". Neden: Android WebView `file://` dosyadan Worker açmıyor. 0.12.1 Tesseract'ı XMLHttpRequest + `blob:` ile başlatıyor (Chromium'da `file://` taklidinde çalıştı; telefonda doğrulanmadı). Kullanıcıdan beklenen: Ayarlar > Uygulama bilgileri > "OCR motorunu dene" sonucu. Çalışmazsa sıradaki seçenek: Android'de `WebViewAssetLoader` ile `https://appassets.androidplatform.net/` altından sunmak — **ama IndexedDB kökeni değişir, kullanıcı verisi kaybolmaz şekilde taşıma (eski kökten yedek → yeni köke yükleme) yapılmadan uygulanmaz.** pdf.js de aynı nedenle ana iş parçacığında çalışıyor; OCR blob yolu telefonda çalışırsa pdf.js için de `GlobalWorkerOptions.workerPort = new Worker(blob)` denenebilir (çalışmayan worker okumayı kilitlememeli, önce sınama).
+- **Seaflo:** Kullanıcı 93 MB "2026 SEAFLO Marine Equipment Catalog" (yazılar çizime çevrilmiş, çift sayfa, ürün bloğu: büyük başlık, madde işaretli açıklama, resim, "Standard Pump Configurations" ara yazısı, model tablosu, fiyat yok) yükledi; ürün çıkmadı (OCR telefonda çalışmadı). Burada parça 02 (8 sayfa): 90 satır / 73 kod, adlar çoğunlukla doğru. Drive'da 10 MB altı parçalar: `SEAFLO_2026_SEAFLO_Marine_Equipment_Catalog_01 … 12.pdf`; ürün listesi `seaflo-com-2026-10-28.xlsx` / `.csv`. Zayıf kalanlar: sayfa 1–2'deki iç içe düzen, aksesuar tabloları (13F001 gibi kodlar kod sütunu sayılmıyor), bazı adlar ("Fal After", "Blister" sayfa 8).
+- **Telefonda bekleyenler:** 0.12.1 "OCR motorunu dene" ve Seaflo sonucu; 0.11.2 Drive'dan büyük dosya kopyalama; 0.11.0 kategori ağacı; 0.9.0'ın tamamı (kendini güncelleme, uygulama içi tarayıcı, ZIP, CSV). Sürüm testi listesi bunları içeriyor.
+- **Görünüm kararı:** Alışveriş uygulaması düzeni; Amazon'un adı, logosu, birebir görünümü ve kategori ağacı kopyalanmaz.
+- **Sınır:** 10 MB üstü Drive dosyaları ve yedek dosyası bu ortama indirilemiyor. Android burada derlenemez; hata GitHub Actions çıktısından okunur.
 - Ayrıntılı teknik geçmiş `DEVIR.md` içindedir.
 
-## YAPILACAK İŞLER (0.10.0 sonrası, sırasıyla)
+## YAPILACAK İŞLER (0.12.1 sonrası, sırasıyla)
 
-Her iş ayrı sürüm numarasıyla çıkar (`APP_VERSION`, `versionName`, `versionCode`, `sw.js` CACHE birlikte artar); aksi halde uygulamanın kendi güncellemesi yeni sürümü görmez. Kullanıcıya seçim sorulmaz.
+Her iş ayrı sürüm numarasıyla çıkar. Kullanıcıya seçim sorulmaz.
 
-### 1. 0.9.0 ve 0.10.0 telefon sonucu (önce bu)
-Kullanıcı sonucu ayrıca gönderecek. Bakılacaklar:
-- **Kendini güncelleme** ilk kez gerçekten denendi mi (0.8.0 içinden 0.9.0'a)? Takıldıysa nerede: kutu çıkmadı / indirmedi / kurulum ekranı açılmadı / izin döngüsü. Kod: `checkUpdate`, `installUpdate`, `downloadTo` (MainActivity.java), `KlavuzUpdate` (app.js).
-- **Uygulama içi tarayıcı:** hangi sitede "Klavuz'a al" kaç ürün getirdi, ad / fiyat / resim eksik mi. Gerçek Amazon ve Hepsiburada sayfaları bu ortamda denenemedi. Eksik çıkarsa kullanıcıdan sitenin adını ve sayfanın türünü (ürün / arama / kategori) iste; `extractProduct` ve `extractList` o siteye göre ayarlanır. Gerekirse tarayıcıya "sayfanın HTML'ini paylaş" gibi bir teşhis düğmesi eklenip örnek alınır.
-- **ZIP** ve **CSV Türkçe harf** telefonda çalıştı mı.
-- Hâlâ bekleyen: kullanıcıdan **"Durum özeti"** metni (Ayarlar > Uygulama bilgileri) ve yanlış otomatik doğrulanan ürün adları hiç gelmedi. 0.8.0'da "otomatik doğrulananlar doğru" işaretlendi; yine de özet gelirse uyarı nedenlerine bakılır.
+### 1. Telefon sonuçları (önce bu)
+- **OCR motoru:** "OCR motorunu dene" sonucu. "çalışıyor ✓ · bellekten" ise Seaflo parça 02 ile ürün kartı sonucu, süre ve bellek. Çalışmıyorsa yukarıdaki "EN ÖNEMLİ AÇIK KONU".
+- **Seaflo tam katalog:** kaç ürün, süre, kalan süre gösterimi doğru mu, uygulama dondu mu.
+- **Kategori ağacı:** yanlış gruba düşen ürün örnekleri (kullanıcı "ad → olması gereken" yazacak); `TREE` sözcükleri buna göre ayarlanır, `KLAVUZ_TEST.api.classify` ile 476 gerçek ad üzerinde önce / sonra karşılaştırılır.
+- **0.9.0'dan bekleyenler:** kendini güncelleme (`checkUpdate`, `installUpdate`, `downloadTo`), uygulama içi tarayıcıdan alma (Amazon / Hepsiburada), ZIP, CSV.
 
-### 2. OCR — YAPILDI (0.10.0). Aşağısı ilk plan; uygulanan hali DEVIR.md "Sürüm 0.10.0". Açık kalanlar: telefondaki süre / bellek sonucu, tablonun yalnız bir bölümü resim olan sayfa (sayfanın tamamı OCR'lanıyor, gerçek yazıyla çakışan OCR sözcüğü atılıyor; ayrı resim kutusu OCR'ı yapılmadı).
+### 2. OCR — YAPILDI (0.10.0–0.12.1). Aşağısı ilk plan; uygulanan hali DEVIR.md "Sürüm 0.10.0" ve sonrası. Açık kalanlar: telefonda çalışması (yukarıda), Seaflo türü katalogda ad / aksesuar tablosu iyileştirmeleri.
 Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (Apache 2.0)**. Yavaş olabilir; arka planda, parça parça.
 - **Örnek belgeler (Drive):** Vamates (tamamı taranmış PDF), Flowmaster (tabloları resim). Drive'da adla aranıp `download_file_content` ile indirilir (10 MB altıysa). Önce burada node ile denenir.
 - **Ne zaman devreye girer:** sayfada yazı yok ya da çok az (`items.length < 5`; şu an `stat.emptyPages` sayılıyor) ve sayfada büyük resim varsa. Yazısı olan sayfaya OCR yapılmaz. Belge raporunda "OCR ile okunan sayfa: N" yazsın.
@@ -45,8 +44,8 @@ Karar verildi (kullanıcıya sorulmaz): **telefonda, internetsiz, Tesseract.js (
 - İnternetten alınan üründe sitenin kırıntı yolu (JSON-LD `BreadcrumbList`, Amazon `#wayfinding-breadcrumbs_feature_div`) kategori ipucu olarak kullanılır.
 - Amazon'un ağacı birebir kopyalanmaz; tekne teknik malzemesine uygun ağaç kurulur. Kullanıcı ağacı uygulamada düzeltebilmeli (ad değiştir, alt grup ekle).
 
-### 4. Drive'daki öbür kataloglar (SIRADAKİ İŞ)
-`05_MARKA_PROFILLERI` altında yaklaşık 50 marka klasörü var. Katalogları tek tek indirip (10 MB altı) okuyucudan geçir, okunamayan düzenleri çıkar, en çok ürün kazandıranı önce düzelt. Her değişiklikte Boss, Asel, Elif Depo, GS Marine Valve, Rushwarm, Asmarine, Eser Pompa çıktısı öncekiyle karşılaştırılır.
+### 4. Drive'daki öbür kataloglar (telefon sonuçlarından sonra SIRADAKİ İŞ)
+`05_MARKA_PROFILLERI` altında yaklaşık 50 marka klasörü var. Katalogları tek tek indirip (10 MB altı) okuyucudan geçir, okunamayan düzenleri çıkar, en çok ürün kazandıranı önce düzelt. Her değişiklikte Boss, Asel, Elif Depo, GS Marine Valve, Rushwarm, Asmarine, Eser Pompa, Flowmaster ve Seaflo parça 02 çıktısı öncekiyle karşılaştırılır.
 
 ### 4b. Klavuz'dan PDF katalog / fiyat listesi üretme (kullanıcının getirdiği Gemini önerisinden alınan fikir)
 - Seçilen ürünlerden (marka, kategori, sepet ya da arama sonucu) HC MARIN WORKS başlıklı, resimli PDF katalog veya fiyat listesi. Müşteri çıktısında yalnız satış fiyatı (alış ve kâr görünmez). Telefonda, internetsiz: HTML sayfa düzeni + Android yazdırma (`WebView.createPrintDocumentAdapter`, "PDF olarak kaydet"); web'de `window.print()`.
